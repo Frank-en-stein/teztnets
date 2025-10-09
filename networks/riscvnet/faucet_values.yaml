@@ -1,0 +1,70 @@
+images:
+  tezosFaucet: ghcr.io/tacoinfra/tezos-faucet:3.0.3
+  tezosFaucetBackend: ghcr.io/tacoinfra/tezos-faucet-backend:3.0.1
+
+# Configure structured logging for Google Cloud Logging
+env:
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"
+  # Enable reCAPTCHA and challenges
+  DISABLE_CHALLENGES: "false"
+  ENABLE_CAPTCHA: "true"
+
+# Frontend app configuration. You can optionally deploy only the faucet backend.
+enableUI: true
+config:
+  application:
+    name: "Tezos Riscvnet Faucet"
+    disableChallenges: false
+    googleCaptchaSiteKey: "6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI"  # Test key
+    backendUrl: "" # filled in by pulumi
+    githubRepo: https://github.com/tacoinfra/tezos-faucet
+  network:
+    name: custom
+    rpcUrl: "" # filled in by pulumi
+    faucetAddress: tz1P2DqS58eSkefYpNwmF2Vu2c6fJUx1a9A7
+
+# Value the server sets for the "Access-Control-Allow-Origin" header for CORS.
+authorizedHost: "" # filled in by pulumi
+# RPC url for the faucet backend. Default value assumes tezos-k8s created an RPC
+# service in the same namespace. If not set, defaults to `config.network.rpcUrl`.
+backendRpcUrl: http://tezos-node-rpc:8732
+# If the backend requires CAPTCHA tokens to be submitted.
+enableCaptcha: true
+
+# Faucet won't dispense to an address if its balance exceeds this.
+maxBalance: 48000
+
+# The minimum Tez allowed per request.
+minTez: 1
+# The maximum Tez allowed per request.
+maxTez: 40000
+
+disableChallenges: false
+# Minimum number of challenges required for the minimum Tez request.
+minChallenges: 1
+# Maximum number of challenges required for the maximum Tez request.
+# 1100 challenges should take ~20m.
+maxChallenges: 1100
+# Maximum number of challenges required for the maximum Tez request when a
+# captcha is used.
+# 53 challenges should take ~4m.
+maxChallengesWithCaptcha: 53
+# How many bytes the challenge string should be.
+challengeSize: 2048
+# Difficulty level for challenges.
+difficulty: 4
+
+# Redis disabled - faucet will use in-memory storage
+redis:
+  deploy: true
+  url: ""
+
+# Service - Using LoadBalancer to get external IP instead of ingress
+service:
+  type: LoadBalancer
+  port: 80
+
+# Ingress - Disabled since we don't have DNS configured yet
+ingress:
+  enabled: false

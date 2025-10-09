@@ -1,0 +1,15 @@
+{
+  "data-dir": "/var/lib/tezos",
+  "rpc": {
+    "listen-addrs": ["0.0.0.0:8732"],
+    "acl": [
+      {
+        "address": "0.0.0.0",
+        "blacklist": []
+      }
+    ]
+  },
+  "p2p": {
+    "listen-addr": "[::]:9732"
+  }
+}

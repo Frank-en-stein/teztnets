@@ -4,3 +4,4 @@ node_modules
 target/
 networks.json
 teztnets.json
+riscvnet-accounts-backup.json

@@ -1,0 +1,21 @@
+config:
+  teztnets:riscvnet-activator-key:
+    secure: AAABAIA51OcGsr7Is9b4Q4GlXF14zT5FZpXawI3Ey+Q0KsqazzhGuHOCkY5P4inBvcJPSEkfh2wHDexHIphEg1fu3oGXx6nZJkS8rlU2O9vE8TzOnL0=
+  teztnets:riscvnet-injector-key:
+    secure: AAABACTPzs98A2xlSTzCVnMMwbG74fGb5a/PjxPokin5qtThzvovV8H01G8aQdy+NhYiYN9i5ctBNFfjUfI3VMKkRVB6JpRzdY9jOcorK03sFE40fhg=
+  teztnets:riscvnet-rollup-operator-key:
+    secure: AAABAN3d+NaG1eD6lKIsgrwwjpTmcfWO9Q6R1WNVhoFMss6CcMD3uBVcgNulddIQeK8rlOify5foco4unYSp4IQGS78Awp+slSlabIJOK15GfpHN50c=
+  teztnets:riscvnet-bootstrap1-key:
+    secure: AAABAOm4YUlU+uwK/a11351yz7Nt/jmYE89lApnHDjEW9LeMKjuUaUUvnR7sWNDqxGubsF1rcRJdAm6CfZD03O7Y7cchV4DrkwOuWhKaAiQqoB+aCyU=
+  teztnets:riscvnet-bootstrap2-key:
+    secure: AAABABEdUk9AJdpLaqynCrTZNZJop58z3WC2jAcMpkw75xsuxk9XzRh0o4N6MCydCn/L/yMqZ7XAcOEKg/PaJCS+KK1a34xyqeZMEEoXr9YyEg114U8=
+  teztnets:riscvnet-bootstrap3-key:
+    secure: AAABAMvnjPo/vByr84kaYVmzTCMmAZhqwUtBF2AUEeWZdKaXIPmhVAhxNoRsmj4iU9aPTiIdNyj5ssnT3z24lb/8vJ0NVawEuEC9we5gtG93dXRcof8=
+  teztnets:riscvnet-bootstrap4-key:
+    secure: AAABAB/yxtM08GufLo6Id5WoVzAkZYX6bxfSerrJE+4gHhS5y2YxCMZFlWkNGxXTx08lGcaKChPWDqXbGXeRbKts9xHWtdUDSTfPuDO54CQsRzcMCQ0=
+  teztnets:riscvnet-bootstrap5-key:
+    secure: AAABAGbC5YIT6ZFxX38SSqfGO0E4vX9budROScENir9tbqR6qr5Z1PbC64Kr0CIH1RRTC0bn5vI+curNKvoZ9vUvpDK10F09iFzJJERatvnQbew8CpM=
+  teztnets:riscvnet-faucet-key:
+    secure: AAABAHolmYMQiGYA68OczUnGfR80MM74bgv5vWsp3+J3OHdFqHRFV5LNoSkbP56brJKy/ongVh9sscETefUTF7rd75VmjJSjZfab6nca94YPommX8bE=
+  gcp:project: jstz-dev-dbc1
+  gcp:region: europe-west2
