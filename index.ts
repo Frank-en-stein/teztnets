@@ -1,484 +1,416 @@
 import * as pulumi from "@pulumi/pulumi"
 import * as gcp from "@pulumi/gcp"
 import * as k8s from "@pulumi/kubernetes"
-
-import * as blake2b from "blake2b"
-import * as bs58check from "bs58check"
-
-import deployStatusPage from "./tezos/statusPage"
-import deployMetricsPage from "./tezos/metricsPage"
-import { TezosChain } from "./tezos/chain"
-import { TezosNodes } from "./tezos/nodes"
-import { TezosFaucet } from "./tezos/faucet"
-import getPublicKeyFromPrivateKey from './tezos/keys'
+import * as fs from "fs"
+import * as YAML from "yaml"
 
 const cfg = new pulumi.Config()
-const faucetPrivateKey = cfg.requireSecret("faucet-private-key")
+
+// GCP Configuration
+const gcpProject = cfg.get("gcp-project") || "jstz-dev-dbc1"
+const gcpRegion = cfg.get("gcp-region") || "europe-west2"
+const clusterName = cfg.get("cluster-name") || "riscvnet-cluster"
+
+// Riscvnet secret keys from GCP Secret Manager
+const riscvnetActivatorKey = cfg.requireSecret("riscvnet-activator-key")
+const riscvnetBootstrap1Key = cfg.requireSecret("riscvnet-bootstrap1-key")
+const riscvnetBootstrap2Key = cfg.requireSecret("riscvnet-bootstrap2-key")
+const riscvnetBootstrap3Key = cfg.requireSecret("riscvnet-bootstrap3-key")
+const riscvnetBootstrap4Key = cfg.requireSecret("riscvnet-bootstrap4-key")
+const riscvnetBootstrap5Key = cfg.requireSecret("riscvnet-bootstrap5-key")
+const riscvnetFaucetKey = cfg.requireSecret("riscvnet-faucet-key")
+
 const faucetRecaptchaSiteKey = cfg.requireSecret("faucet-recaptcha-site-key")
-const faucetRecaptchaSecretKey = cfg.requireSecret(
-  "faucet-recaptcha-secret-key"
-)
-const private_teztnets_baking_key = cfg.requireSecret(
-  "tf-teztnets-baking-key"
-)
+const faucetRecaptchaSecretKey = cfg.requireSecret("faucet-recaptcha-secret-key")
 
-const stackname = cfg.require("infra_stack")
-const stackRef = new pulumi.StackReference(stackname)
-
-const kubeconfig = stackRef.requireOutput("kubeconfig")
-
-const provider = new k8s.Provider("do-k8s-provider", {
-  kubeconfig,
+// Reserve static IP for P2P endpoint (only P2P needs static IP for external nodes)
+const p2pStaticIp = new gcp.compute.Address("riscvnet-p2p-ip", {
+    name: "riscvnet-p2p-static-ip",
+    region: gcpRegion,
+    project: gcpProject,
 })
 
-const periodicCategory = "Periodic/Internal Teztnets"
-const protocolCategory = "Protocol Teztnets"
-const featureCategory = "Feature Teztnets"
-const otherCategory = "Other Teztnets"
-const longCategory = "Long-running Teztnets"
+// Reserve global static IP for Ingress
+const ingressStaticIp = new gcp.compute.GlobalAddress("riscvnet-ingress-ip", {
+    name: "riscvnet-ingress-static-ip",
+    project: gcpProject,
+})
 
-// Create a GCP resource (Storage Bucket) for Bootstrap Smart Contracts
-const activationBucket = new gcp.storage.Bucket("testnets-global-activation-bucket", {
-  location: "US", // You can choose the appropriate location
-  uniformBucketLevelAccess: true,
-  storageClass: "STANDARD",
-});
+// SSL certificates will be created after namespace and k8sProvider
 
-// Set the bucket to be publicly readable
-new gcp.storage.BucketIAMMember("publicRead", {
-  bucket: activationBucket.name,
-  role: "roles/storage.objectViewer",
-  member: "allUsers",
-});
+// Metrics/Grafana temporarily disabled
+// const metricsStaticIp = new gcp.compute.GlobalAddress("riscvnet-metrics-ip", {
+//     name: "riscvnet-metrics-static-ip",
+//     project: gcpProject,
+// })
 
+// DNS records will be created after LoadBalancers (at end of file)
 
-// Define another domain name and a suitable name for the managed zone
-const domainNameCom = "teztnets.com";
-const managedZoneNameCom = "teztnetscom-zone";
-
-// Create a managed DNS zone
-const dnsZoneCom = new gcp.dns.ManagedZone(managedZoneNameCom, {
-  name: managedZoneNameCom,
-  dnsName: domainNameCom + ".",
-  description: "Managed zone for " + domainNameCom,
-});
-
-
-// GitHub Pages IP addresses
-
-// Create A records for each GitHub Pages IP
-new gcp.dns.RecordSet("teztnetsComSiteRecord", {
-  name: domainNameCom + ".",
-  managedZone: dnsZoneCom.name,
-  type: "A",
-  ttl: 300,
-  rrdatas: [
-    "185.199.108.153",
-    "185.199.109.153",
-    "185.199.110.153",
-    "185.199.111.153",
-  ]
-});
-
-// Weeklynet - restarts Wednesdays
-const weeklynet_chain = new TezosChain(
-  {
-    category: periodicCategory,
-    humanName: "Weeklynet",
-    description:
-      "A testnet that restarts every Wednesday launched from tezos/tezos master branch. It runs Next for 4 cycles then upgrades to proto Alpha.",
-    schedule: "0 0 * * WED",
-    activationBucket: activationBucket,
-    bootstrapContracts: [
-      // "exchanger.json",
-      // "evm_bridge.json",
-    ],
-    helmValuesFile: "networks/weeklynet/values.yaml",
-    bakingPrivateKey: private_teztnets_baking_key,
-    // chartPath: "networks/weeklynet/tezos-k8s", // point to a submodule, to run unreleased tezos-k8s code
-    chartRepoVersion: "7.2.0", // point to a release of tezos-k8s. This should be the default state.
-    bootstrapPeers: [ "weeklynet.tzinit.org" ],
-  },
-  provider
-)
-new TezosFaucet(
-  weeklynet_chain.name,
-  {
-    humanName: "Weeklynet",
-    namespace: weeklynet_chain.namespace,
-    helmValuesFile: "networks/weeklynet/faucet_values.yaml",
-    faucetPrivateKey: faucetPrivateKey,
-    faucetRecaptchaSiteKey: faucetRecaptchaSiteKey,
-    faucetRecaptchaSecretKey: faucetRecaptchaSecretKey,
-    chartRepoVersion: "7.2.0",
-  },
-  provider
-)
-
-// Ghostnet is different from the other testnets:
-// * launched long time ago, launch code is not in the active code path
-// * heavy usage on the RPC endpoint requires a more elaborate setup
-//   with archive/rolling nodes, NGINX path filtering and rate limiting.
-// Consequently, we made a special class "TezosNodes" for the purpose.
-const ghostnetRollingVersion = "octez-v23.1"
-const ghostnetArchiveVersion = "octez-v23.1";
-const ghostnet_chain = new TezosNodes(
-  "ghostnet-nodes",
-  {
-    chainName: "ghostnet",
-    rpcFqdn: `rpc.ghostnet.${domainNameCom}`,
-    p2pFqdn: `ghostnet.${domainNameCom}`,
-    octezRollingVersion: ghostnetRollingVersion,
-    octezArchiveVersion: ghostnetArchiveVersion,
-    chartRepoVersion: "7.2.0",
-    rollingPvcSize: "50Gi",
-    archivePvcSize: "3000Gi"
-  },
-  provider,
-)
-new TezosFaucet(
-  "ghostnet",
-  {
-    humanName: "Ghostnet",
-    namespace: ghostnet_chain.namespace,
-    helmValuesFile: "networks/ghostnet/faucet_values.yaml",
-    faucetPrivateKey: faucetPrivateKey,
-    faucetRecaptchaSiteKey: faucetRecaptchaSiteKey,
-    faucetRecaptchaSecretKey: faucetRecaptchaSecretKey,
-    chartRepoVersion: "7.2.0",
-  },
-  provider
-)
-
-// Nextnet test network - use pre-protocol proposal
-/*
-const nextnet2_chain = new TezosChain(
-  {
-    category: protocolCategory,
-    humanName: "Nextnet-20250626",
-    virtualName: "nextnet",
-    snapOver: "nextnet",
-    description: "Test Chain for Next protocol",
-    activationBucket: activationBucket,
-    helmValuesFile: "networks/nextnet-20250626/values.yaml",
-    bakingPrivateKey: private_teztnets_baking_key,
-    bootstrapPeers: [ "nextnet.tzinit.org" ],
-    rpcUrls: [],
-    indexers: [],
-    chartRepoVersion: "7.2.0",
-    networkStakes: true,
-  },
-  provider
-)
-
-new TezosFaucet(
-  nextnet2_chain.name,
-  {
-    namespace: nextnet2_chain.namespace,
-    humanName: "Nextnet-20250626",
-    helmValuesFile: "networks/nextnet-20250626/faucet_values.yaml",
-    faucetPrivateKey: faucetPrivateKey,
-    faucetRecaptchaSiteKey: faucetRecaptchaSiteKey,
-    faucetRecaptchaSecretKey: faucetRecaptchaSecretKey,
-    chartRepoVersion: "7.2.0",
-  },
-  provider
-)
-*/
-// END of Nextnet
-
-// Seoul test network
-
-const seoulnet_chain = new TezosChain(
-  {
-    category: protocolCategory,
-    humanName: "Seoulnet",
-    description: "Test Chain for Seoul protocol",
-    activationBucket: activationBucket,
-    helmValuesFile: "networks/seoulnet/values.yaml",
-    bakingPrivateKey: private_teztnets_baking_key,
-    bootstrapPeers: [ "seoulnet.tzinit.org" ],
-    rpcUrls: [],
-    indexers: [],
-    chartRepoVersion: "7.2.0",
-    networkStakes: true,
-  },
-  provider
-)
-
-new TezosFaucet(
-  seoulnet_chain.name,
-  {
-    namespace: seoulnet_chain.namespace,
-    humanName: "Seoulnet",
-    helmValuesFile: "networks/seoulnet/faucet_values.yaml",
-    faucetPrivateKey: faucetPrivateKey,
-    faucetRecaptchaSiteKey: faucetRecaptchaSiteKey,
-    faucetRecaptchaSecretKey: faucetRecaptchaSecretKey,
-    chartRepoVersion: "7.2.0",
-  },
-  provider
-)
-
-// END of Seoulnet
-
-// Shadownet testing
-//
-const shadownet_chain = new TezosChain(
-  {
-    category: longCategory,
-    humanName: "Shadownet",
-    description: "Shadownet - long term testnet",
-    activationBucket: activationBucket,
-    helmValuesFile: "networks/shadownet/values.yaml",
-    bakingPrivateKey: private_teztnets_baking_key,
-    bootstrapPeers: [ "shadownet.tzinit.org" ],
-    rpcUrls: [],
-    indexers: [],
-    chartRepoVersion: "7.2.0",
-    networkStakes: true,
-  },
-  provider
-)
-
-new TezosFaucet(
-  shadownet_chain.name,
-  {
-    namespace: shadownet_chain.namespace,
-    humanName: "Shadownet",
-    helmValuesFile: "networks/shadownet/faucet_values.yaml",
-    faucetPrivateKey: faucetPrivateKey,
-    faucetRecaptchaSiteKey: faucetRecaptchaSiteKey,
-    faucetRecaptchaSecretKey: faucetRecaptchaSecretKey,
-    chartRepoVersion: "7.2.0",
-  },
-  provider
-)
-
-// End of Shadownet
-
-function getNetworks(chains: TezosChain[]): object {
-  const networks: { [name: string]: object } = {}
-
-  chains.forEach(function(chain) {
-    const bootstrapPeers: string[] = Object.assign([], chain.params.bootstrapPeers) // clone
-    bootstrapPeers.splice(0, 0, `${chain.name}.${domainNameCom}`)
-
-    // genesis_pubkey is the public key associated with the $TEZOS_OXHEAD_BAKING_KEY private key in github secrets
-    let genesisPubkey = getPublicKeyFromPrivateKey(chain.params.bakingPrivateKey)
-    const network = Object.assign(
-      {},
-      chain.tezosHelmValues["node_config_network"]
-    ) // clone
-    network["sandboxed_chain_name"] = "SANDBOXED_TEZOS"
-    network["default_bootstrap_peers"] = bootstrapPeers
-    network["genesis_parameters"] = {
-      values: {
-        genesis_pubkey: genesisPubkey,
-      },
-    }
-    if ("activation_account_name" in network) {
-      delete network["activation_account_name"]
-    }
-    if ("genesis" in network && "block" in network["genesis"] === false) {
-      // If block hash not passed, use tezos-k8s convention:
-      // deterministically derive it from chain name.
-      var input = Buffer.from(network["chain_name"])
-      var gbk = blake2b(32).update(input).digest("hex")
-      var bytes = Buffer.from("0134" + gbk, "hex")
-      network["genesis"]["block"] = bs58check.encode(bytes)
-    }
-    if ("dal_config" in network) {
-      network["dal_config"]["bootstrap_peers"] = [
-        `dal.${chain.name}.${domainNameCom}:11732`,
-	`${chain.name}.bootstrap.dal.nomadic-labs.com:11732`,
-      ]
-    }
-
-    networks[chain.name] = network
-  })
-
-  return networks
-}
-
-function getTeztnets(chains: TezosChain[], virtualName: string=""): object {
-  const teztnets: { [name: string]: { [name: string]: Object } } = {}
-
-  chains.forEach(function(chain) {
-    let faucetUrl = `https://faucet.${chain.name}.${domainNameCom}`
-    teztnets[virtualName || chain.name] = {
-      chain_name: chain.tezosHelmValues["node_config_network"]["chain_name"],
-      network_url: `https://${domainNameCom}/${chain.name}`,
-      human_name: chain.params.humanName,
-      description: chain.params.description,
-      docker_build: chain.getDockerBuild(),
-      git_ref: chain.getGitRef(),
-      last_baking_daemon: chain.getLastBakingDaemon(),
-      faucet_url: faucetUrl,
-      snapshot_url: `https://snapshots.tzinit.org/${chain.snap}/rolling`,
-      category: chain.params.category,
-      rpc_url: chain.getRpcUrl(),
-      rollup_urls: chain.getRollupUrls(),
-      evm_proxy_urls: chain.getEvmProxyUrls(),
-      rpc_urls: chain.getRpcUrls(),
-      masked_from_main_page: !!virtualName,
-      indexers: chain.params.indexers || [],
-      network_stakes: chain.params.networkStakes || false
-    }
-    if (Object.keys(chain.dalNodes).length > 0) {
-      teztnets[virtualName || chain.name].dal_nodes = chain.dalNodes;
-    }
-  })
-
-  return teztnets
-}
-
-// We do not host a ghostnet node here.
-// Oxhead Alpha hosts a ghostnet RPC service and baker in the
-// sensitive infra cluster.
-// Instead, we hardcode the values to be displayed on the webpage.
-const ghostnetNetwork = {
-  chain_name: "TEZOS_ITHACANET_2022-01-25T15:00:00Z",
-  default_bootstrap_peers: [
-    `ghostnet.${domainNameCom}`,
-    "ghostnet.boot.ecadinfra.com",
-    "ghostnet.stakenow.de:9733",
-  ],
-  genesis: {
-    block: "BLockGenesisGenesisGenesisGenesisGenesis1db77eJNeJ9",
-    protocol: "Ps9mPmXaRzmzk35gbAYNCAw6UXdE2qoABTHbN2oEEc1qM7CwT9P",
-    timestamp: "2022-01-25T15:00:00Z",
-  },
-  genesis_parameters: {
-    values: {
-      genesis_pubkey: "edpkuYLienS3Xdt5c1vfRX1ibMxQuvfM67ByhJ9nmRYYKGAAoTq1UC",
+// Create GKE cluster with Google Cloud Logging enabled
+const cluster = new gcp.container.Cluster("riscvnet-cluster", {
+    name: clusterName,
+    location: gcpRegion,
+    initialNodeCount: 1,
+    removeDefaultNodePool: true,
+    project: gcpProject,
+    network: "dev-jstz-network",
+    subnetwork: "dev-jstz-subnet",
+    deletionProtection: false,
+    loggingConfig: {
+        enableComponents: ["SYSTEM_COMPONENTS", "WORKLOADS"],
     },
-  },
-  sandboxed_chain_name: "SANDBOXED_TEZOS",
-}
-
-export const networks = {
-  ...getNetworks([weeklynet_chain]),
-  ...getNetworks([seoulnet_chain]),
-  ...getNetworks([shadownet_chain]),
-//  ...getNetworks([nextnet2_chain]),
-  ...{ ghostnet: ghostnetNetwork },
-}
-
-// We hardcode the values to be displayed on the webpage.
-const lastBakingDaemonMainnetGhostnet = "PsQuebec"
-const ghostnetTeztnet = {
-  category: "Long-running Teztnets",
-  chain_name: "TEZOS_ITHACANET_2022-01-25T15:00:00Z",
-  description: "Ghostnet is the long-running testnet for Tezos.",
-  docker_build: `tezos/tezos:${ghostnetRollingVersion}`,
-  faucet_url: `https://faucet.ghostnet.${domainNameCom}`,
-  snapshot_url: `https://snapshots.tzinit.org/ghostnet/rolling`,
-  git_ref: ghostnetRollingVersion,
-  human_name: "Ghostnet",
-  indexers: [
-    {
-      name: "TzKT",
-      url: "https://ghostnet.tzkt.io",
+    monitoringConfig: {
+        enableComponents: ["SYSTEM_COMPONENTS"],
     },
-    {
-      name: "TzStats",
-      url: "https://ghost.tzstats.com",
+})
+
+const nodePool = new gcp.container.NodePool("riscvnet-nodes", {
+    name: "riscvnet-node-pool",
+    location: gcpRegion,
+    cluster: cluster.name,
+    nodeCount: 3,
+    project: gcpProject,
+    nodeConfig: {
+        machineType: "n1-standard-4",
+        oauthScopes: [
+            "https://www.googleapis.com/auth/compute",
+            "https://www.googleapis.com/auth/devstorage.read_only",
+            "https://www.googleapis.com/auth/logging.write",
+            "https://www.googleapis.com/auth/monitoring",
+        ],
     },
-  ],
-  last_baking_daemon: lastBakingDaemonMainnetGhostnet,
-  masked_from_main_page: false,
-  network_url: `https://${domainNameCom}/ghostnet`,
-  rpc_url: `https://rpc.ghostnet.${domainNameCom}`,
-  rpc_urls: [
-    `https://rpc.ghostnet.${domainNameCom}`,
-    "https://ghostnet.ecadinfra.com",
-  ],
-}
+}, { ignoreChanges: ["nodeConfig"] })
 
-// We also add mainnet to the teztnets metadata.
-// Some systems rely on this to provide lists of third-party RPC services
-// to their users. For example, umami wallet.
-const mainnetMetadata = {
-  category: "Long-running Teztnets",
-  chain_name: "TEZOS_MAINNET",
-  description: "Tezos Mainnet",
-  docker_build: `tezos/tezos:${ghostnetRollingVersion}`,
-  git_ref: ghostnetRollingVersion,
-  human_name: "Mainnet",
-  indexers: [
-    {
-      name: "TzKT",
-      url: "https://tzkt.io",
+// Create kubeconfig
+const kubeconfig = pulumi.
+    all([cluster.name, cluster.endpoint, cluster.masterAuth]).
+    apply(([name, endpoint, masterAuth]) => {
+        const context = `gke_${gcpProject}_${gcpRegion}_${name}`
+        return `apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: ${masterAuth.clusterCaCertificate}
+    server: https://${endpoint}
+  name: ${context}
+contexts:
+- context:
+    cluster: ${context}
+    user: ${context}
+  name: ${context}
+current-context: ${context}
+kind: Config
+preferences: {}
+users:
+- name: ${context}
+  user:
+    exec:
+      apiVersion: client.authentication.k8s.io/v1beta1
+      command: gke-gcloud-auth-plugin
+      installHint: Install gke-gcloud-auth-plugin for use with kubectl by following
+        https://cloud.google.com/blog/products/containers-kubernetes/kubectl-auth-changes-in-gke
+      provideClusterInfo: true
+`
+    })
+
+// Kubernetes provider
+const k8sProvider = new k8s.Provider("gke-k8s", {
+    kubeconfig: kubeconfig,
+}, { dependsOn: [nodePool] })
+
+// Create namespace for riscvnet
+const namespace = new k8s.core.v1.Namespace("riscvnet", {
+    metadata: { 
+        name: "riscvnet",
+        labels: {
+            "app": "riscvnet",
+            "environment": "production",
+        },
     },
-    {
-      name: "TzStats",
-      url: "https://tzstats.com",
-    },
-  ],
-  last_baking_daemon: lastBakingDaemonMainnetGhostnet,
-  masked_from_main_page: true,
-  rpc_url: "https://mainnet.api.tez.ie",
-  rpc_urls: [
-    "https://mainnet.api.tez.ie",
-  ],
-}
+}, { provider: k8sProvider })
 
-export const teztnets = {
-  ...getTeztnets([weeklynet_chain]),
-  ...getTeztnets([shadownet_chain]),
-  ...getTeztnets([seoulnet_chain]),
-  ...getTeztnets([seoulnet_chain], 'currentnet'),
-//  ...getTeztnets([seoulnet_chain], 'proposednet'),
-//  ...getTeztnets([nextnet2_chain]),
-//  ...getTeztnets([nextnet2_chain], 'nextnet'),
-  ...{ ghostnet: ghostnetTeztnet, mainnet: mainnetMetadata },
-}
-
-deployStatusPage(provider, {
-  networks: networks,
-  teztnets: teztnets,
-  statusPageFqdn: `status.${domainNameCom}`,
-  chartRepoVersion: "7.0.9"
-});
-deployMetricsPage(provider, {
-  metricsPageFqdn: `metrics.${domainNameCom}`,
-});
-
-// Redirects .xyz to .com
-
-function createDomainRedirectIngress(srcDomain: string, destDomain: string): k8s.networking.v1.Ingress {
-  return new k8s.networking.v1.Ingress(`ingress-redirect-${srcDomain}`, {
+// Create Kubernetes ManagedSslCertificate resources for GKE ingress
+const rpcSslCert = new k8s.apiextensions.CustomResource("riscvnet-rpc-ssl-cert", {
+    apiVersion: "networking.gke.io/v1",
+    kind: "ManagedCertificate",
     metadata: {
-      annotations: {
-        "kubernetes.io/ingress.class": "nginx",
-        "cert-manager.io/cluster-issuer": "letsencrypt-prod",
-        "nginx.ingress.kubernetes.io/enable-cors": "true",
-        "nginx.ingress.kubernetes.io/cors-allow-origin": "*",
-        "nginx.ingress.kubernetes.io/server-snippet": `return 301 $scheme://${destDomain}$request_uri;`
-      },
+        name: "riscvnet-rpc-ssl-cert",
+        namespace: namespace.metadata.name,
     },
     spec: {
-      tls: [{
-        hosts: [srcDomain],
-        secretName: `${srcDomain}-secret`,
-      }],
-      rules: [{
-        host: srcDomain
-      }]
+        domains: ["rpc.riscvnet.jstz.info"],
     },
-  }, { provider });
+}, { provider: k8sProvider })
+
+const faucetSslCert = new k8s.apiextensions.CustomResource("riscvnet-faucet-ssl-cert", {
+    apiVersion: "networking.gke.io/v1",
+    kind: "ManagedCertificate",
+    metadata: {
+        name: "riscvnet-faucet-ssl-cert",
+        namespace: namespace.metadata.name,
+    },
+    spec: {
+        domains: ["faucet.riscvnet.jstz.info"],
+    },
+}, { provider: k8sProvider })
+
+// Log sink creation removed due to insufficient permissions
+// Logs are automatically exported to Google Cloud Logging via GKE cluster configuration
+
+// Load and prepare tezos-k8s helm values
+const helmValuesFile = fs.readFileSync("networks/riscvnet/values.yaml", "utf8")
+const helmValues = YAML.parse(helmValuesFile)
+
+// Inject secret keys
+helmValues["accounts"]["activator"]["key"] = riscvnetActivatorKey
+helmValues["accounts"]["bootstrap1"]["key"] = riscvnetBootstrap1Key
+helmValues["accounts"]["bootstrap2"]["key"] = riscvnetBootstrap2Key
+helmValues["accounts"]["bootstrap3"]["key"] = riscvnetBootstrap3Key
+helmValues["accounts"]["bootstrap4"]["key"] = riscvnetBootstrap4Key
+helmValues["accounts"]["bootstrap5"]["key"] = riscvnetBootstrap5Key
+
+// Configure log export for Google Cloud Logging
+helmValues["logExport"] = {
+    enabled: true,
+    destination: "gcp",
+    project: gcpProject,
+    cluster: cluster.name,
+    namespace: namespace.metadata.name,
 }
 
-// Define your domain name and a suitable name for the managed zone
-const domainName = "teztnets.xyz";
-const managedZoneName = "teztnets-zone";
+// LoadBalancer services created separately below via Pulumi (helm chart rpc_public/p2p_public not working)
+// Service monitoring temporarily disabled
+// helmValues["serviceMonitor"] = {
+//     enabled: true,
+// }
 
-// Create a managed DNS zone
-const dnsZone = new gcp.dns.ManagedZone(managedZoneName, {
-  name: managedZoneName,
-  dnsName: domainName + ".",
-  description: "Managed zone for " + domainName,
-});
+// Deploy tezos-k8s chart for riscvnet
+const tezosChart = new k8s.helm.v3.Chart("riscvnet-tezos", {
+    chart: "tezos-chain",
+    version: "6.25.0",
+    namespace: namespace.metadata.name,
+    fetchOpts: {
+        repo: "https://oxheadalpha.github.io/tezos-helm-charts/",
+    },
+    values: helmValues,
+}, { provider: k8sProvider, dependsOn: [namespace] })
 
-createDomainRedirectIngress("teztnets.xyz", "teztnets.com");
+// Load faucet values
+const faucetValuesFile = fs.readFileSync("networks/riscvnet/faucet_values.yaml", "utf8")
+const faucetValues = YAML.parse(faucetValuesFile)
+
+// Set faucet configuration
+faucetValues["config"]["application"]["backendUrl"] = "https://faucet.riscvnet.jstz.info"
+faucetValues["config"]["network"]["rpcUrl"] = "https://rpc.riscvnet.jstz.info"
+faucetValues["authorizedHost"] = "*"
+faucetValues["enableCaptcha"] = false
+faucetValues["faucetPrivateKey"] = riscvnetFaucetKey
+
+// Configure log export for faucet
+faucetValues["logExport"] = {
+    enabled: true,
+    destination: "gcp",
+    project: gcpProject,
+    cluster: cluster.name,
+    namespace: namespace.metadata.name,
+}
+// Faucet LoadBalancer created separately below via Pulumi
+
+// Deploy faucet (recaptcha disabled) - Updated faucet_values.yaml
+const faucetChart = new k8s.helm.v3.Chart("riscvnet-faucet", {
+    chart: "tezos-faucet",
+    version: "6.25.0",
+    namespace: namespace.metadata.name,
+    fetchOpts:
+{
+        repo: "https://oxheadalpha.github.io/tezos-helm-charts/",
+    },
+    values: faucetValues,
+}, { provider: k8sProvider, dependsOn: [namespace] })
+
+// Create ClusterIP services (internal only) for RPC and Faucet
+const rpcService = new k8s.core.v1.Service("riscvnet-rpc-service", {
+    metadata: {
+        name: "riscvnet-rpc-service",
+        namespace: namespace.metadata.name,
+        annotations: {
+            "cloud.google.com/neg": '{"ingress":true}',
+            "cloud.google.com/backend-config": '{"default": "rpc-backend-config"}',
+        },
+    },
+    spec: {
+        type: "ClusterIP",
+        ports: [{
+            port: 8732,
+            targetPort: 8732,
+            protocol: "TCP",
+            name: "rpc",
+        }],
+        selector: {
+            node_class: "tezos-baking-node",
+        },
+    },
+}, { provider: k8sProvider, dependsOn: [tezosChart] })
+
+// Create BackendConfig for RPC service with proper health check
+const rpcBackendConfig = new k8s.apiextensions.CustomResource("riscvnet-rpc-backend-config", {
+    apiVersion: "cloud.google.com/v1",
+    kind: "BackendConfig",
+    metadata: {
+        name: "rpc-backend-config",
+        namespace: namespace.metadata.name,
+    },
+    spec: {
+        healthCheck: {
+            checkIntervalSec: 10,
+            timeoutSec: 5,
+            healthyThreshold: 1,
+            unhealthyThreshold: 3,
+            type: "HTTP",
+            port: 8732,
+            requestPath: "/chains/main/blocks/head",
+        },
+        timeoutSec: 30,
+    },
+}, { provider: k8sProvider })
+
+const faucetService = new k8s.core.v1.Service("riscvnet-faucet-service", {
+    metadata: {
+        name: "riscvnet-faucet-service",
+        namespace: namespace.metadata.name,
+    },
+    spec: {
+        type: "ClusterIP",
+        ports: [{
+            port: 8080,
+            targetPort: 8080,
+            protocol: "TCP",
+            name: "http",
+        }],
+        selector: {
+            app: "tezos-faucet",
+        },
+    },
+}, { provider: k8sProvider, dependsOn: [faucetChart] })
+
+// Create LoadBalancer service for P2P (port 9732 -> 9732) - external nodes need direct access
+const p2pLoadBalancer = new k8s.core.v1.Service("riscvnet-p2p-lb", {
+    metadata: {
+        name: "riscvnet-p2p-lb",
+        namespace: namespace.metadata.name,
+    },
+    spec: {
+        type: "LoadBalancer",
+        loadBalancerIP: p2pStaticIp.address,
+        ports: [{
+            port: 9732,
+            targetPort: 9732,
+            protocol: "TCP",
+            name: "p2p",
+        }],
+        selector: {
+            appType: "octez-node",
+        },
+    },
+}, { provider: k8sProvider, dependsOn: [tezosChart] })
+
+// Create GKE Ingress for HTTPS (RPC and Faucet)
+const httpsIngress = new k8s.networking.v1.Ingress("riscvnet-https-ingress", {
+    metadata: {
+        name: "riscvnet-https-ingress",
+        namespace: namespace.metadata.name,
+        annotations: {
+            "kubernetes.io/ingress.global-static-ip-name": ingressStaticIp.name,
+            "networking.gke.io/managed-certificates": "riscvnet-rpc-ssl-cert,riscvnet-faucet-ssl-cert",
+            "kubernetes.io/ingress.class": "gce",
+        },
+    },
+    spec: {
+        rules: [
+            {
+                host: "rpc.riscvnet.jstz.info",
+                http: {
+                    paths: [{
+                        path: "/*",
+                        pathType: "ImplementationSpecific",
+                        backend: {
+                            service: {
+                                name: rpcService.metadata.name,
+                                port: { number: 8732 },
+                            },
+                        },
+                    }],
+                },
+            },
+            {
+                host: "faucet.riscvnet.jstz.info",
+                http: {
+                    paths: [{
+                        path: "/*",
+                        pathType: "ImplementationSpecific",
+                        backend: {
+                            service: {
+                                name: faucetService.metadata.name,
+                                port: { number: 8080 },
+                            },
+                        },
+                    }],
+                },
+            },
+        ],
+    },
+}, { provider: k8sProvider, dependsOn: [rpcService, faucetService, rpcSslCert, faucetSslCert] })
+
+// Grafana and Prometheus temporarily disabled
+// const grafanaDashboardsData: Record<string, string> = {}
+// const dashboardFiles = ["dal-basic.json", "octez-compact.json"]
+// dashboardFiles.forEach(file => {
+//     grafanaDashboardsData[file] = fs.readFileSync(`./grafana_dashboards/${file}`, "utf8")
+// })
+
+// Create DNS records pointing to Ingress IP (for HTTPS) and P2P LoadBalancer IP
+const rpcDnsRecord = new gcp.dns.RecordSet("riscvnet-rpc-dns", {
+    name: "rpc.riscvnet.jstz.info.",
+    managedZone: "jstz-info",
+    type: "A",
+    ttl: 300,
+    rrdatas: [ingressStaticIp.address],
+    project: gcpProject,
+}, { dependsOn: [ingressStaticIp] })
+
+const faucetDnsRecord = new gcp.dns.RecordSet("riscvnet-faucet-dns", {
+    name: "faucet.riscvnet.jstz.info.",
+    managedZone: "jstz-info",
+    type: "A",
+    ttl: 300,
+    rrdatas: [ingressStaticIp.address],
+    project: gcpProject,
+}, { dependsOn: [ingressStaticIp] })
+
+const p2pDnsRecord = new gcp.dns.RecordSet("riscvnet-p2p-dns", {
+    name: "p2p.riscvnet.jstz.info.",
+    managedZone: "jstz-info",
+    type: "A",
+    ttl: 300,
+    rrdatas: [p2pLoadBalancer.status.loadBalancer.ingress[0].ip],
+    project: gcpProject,
+}, { dependsOn: [p2pLoadBalancer] })
+
+// Export useful information
+export const clusterNameOutput = cluster.name
+export const kubeconfigOutput = kubeconfig
+export const namespaceOutput = namespace.metadata.name
+export const ingressStaticIpOutput = ingressStaticIp.address
+export const rpcDomain = "rpc.riscvnet.jstz.info"
+export const rpcEndpoint = "https://rpc.riscvnet.jstz.info"
+export const faucetDomain = "faucet.riscvnet.jstz.info"
+export const faucetEndpoint = "https://faucet.riscvnet.jstz.info"
+export const p2pStaticIpOutput = p2pStaticIp.address
+export const p2pDomain = "p2p.riscvnet.jstz.info"
+export const p2pEndpoint = "p2p.riscvnet.jstz.info:9732"
+export const rpcSslCertOutput = "riscvnet-rpc-ssl-cert"
+export const faucetSslCertOutput = "riscvnet-faucet-ssl-cert"
+export const logFilter = `resource.type="k8s_container" AND resource.labels.namespace_name="riscvnet"`
+// export const metricsStaticIpOutput = metricsStaticIp.address
+// export const metricsDomain = "metrics.riscvnet.jstz.info"
+// export const metricsEndpoint = "http://metrics.riscvnet.jstz.info"
+
