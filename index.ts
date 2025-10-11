@@ -267,7 +267,7 @@ const rpcBackendConfig = new k8s.apiextensions.CustomResource("riscvnet-rpc-back
             unhealthyThreshold: 3,
             type: "HTTP",
             port: 8732,
-            requestPath: "/chains/main/blocks/head",
+            requestPath: "/version",
         },
         timeoutSec: 30,
     },
