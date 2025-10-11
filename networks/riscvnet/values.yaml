@@ -5,9 +5,8 @@ node_config_network:
     protocol: Ps9mPmXaRzmzk35gbAYNCAw6UXdE2qoABTHbN2oEEc1qM7CwT9P
     timestamp: "2025-09-11T12:00:00Z"
   dal_config:
-    activated: true
-    bootstrap_peers:
-      - dal-bootstrap:11732
+    activated: false
+    bootstrap_peers: []
 
 activation:
   protocol_hash: PtSeouLouXkxhg39oWzjxDWaCydNfR3RxCUrNe4Q9Ro8BTehcbh
@@ -145,7 +144,7 @@ nodes:
         TEZOS_LOG_LEVEL: "info"
         TEZOS_LOG_FORMAT: "json"
       baker:
-        BAKER_EXTRA_ARGS: "--dal-node http://dal-dal1:10732"
+        BAKER_EXTRA_ARGS: ""
     instances:
       - bake_using_accounts:
           - activator
@@ -154,7 +153,7 @@ nodes:
           - bootstrap3
           - bootstrap4
           - bootstrap5
-        dal_node_rpc_url: http://dal-dal1:10732
+        dal_node_rpc_url: ""
         config:
           shell:
             history_mode: archive
@@ -182,51 +181,13 @@ nodes:
 
 
 
-dalNodes:
-  dal-bootstrap:
-    bootstrapProfile: true
-    node_rpc_url: http://tezos-baking-node-0.tezos-baking-node:8732
-    storageSize: 100Gi
-    env:
-      all:
-        # Configure structured logging for Google Cloud Logging
-        TEZOS_LOG_LEVEL: "info"
-        TEZOS_LOG_FORMAT: "json"
-    ingress:
-    # ingress details filled up by pulumi
-    identity:
-      peer_id: "idtJh8bYedP2hKdRk6oCLX3SS2KuTM"
-      public_key:
-        "5a6cd66cbd2f69817fb2eb81e5dd2a9c4f88df950fc90a96a08fe3976724a063"
-      secret_key:
-          "42f716781cf80b2b7ad129ac56dfcb1b333f3021e49c6729199de8303c7152c9"
-      proof_of_work_stamp: "b7edd6ea938998f8f088b83b692baeddb49f5522f07572f9"
-  dal-dal1:
-    attest_using_accounts:
-      - activator
-    attesterProfiles: tz1a3bL5hVVibgbaJ7zM3uUJU1iHUgxxpVkU
-    node_rpc_url: http://tezos-baking-node-0.tezos-baking-node:8732
-    storageSize: 100Gi
-    env:
-      all:
-        # Configure structured logging for Google Cloud Logging
-        TEZOS_LOG_LEVEL: "info"
-        TEZOS_LOG_FORMAT: "json"
-    ingress:
-    # ingress details filled up by pulumi
-    identity:
-      peer_id: "ids8gZ6Gu67e58DqPn2e9VyjasB1jo"
-      public_key:
-        "c4ea1f6dddfa43b87b6a37432c4c34e1c79baeed5ff165fee2a85ffafb819e5f"
-      secret_key:
-          "a67519da6166f97ca2dea6dc519f1a453d96e01348816d102fb9a7099ee08137"
-      proof_of_work_stamp: "c85a3aab8a1fc903e8c7e9bcd1714a890e22f160a96d9779"
+dalNodes: {}
 
 dal_deploy_slot_injector:
-  enabled: true
-  inject_using_account: activator
-  node_rpc_url: http://tezos-baking-node-0.tezos-baking-node:8732
-  dal_node_rpc_url: http://dal-dal1:10732
+  enabled: false
+  inject_using_account: ""
+  node_rpc_url: ""
+  dal_node_rpc_url: ""
   slot_size: 65536
 
 bootstrap_peers:
@@ -251,13 +212,13 @@ protocols:
 
 accounts:
   activator:
-    # Protocol activation + baking + DAL operations
+    # Protocol activation + baking
     # tz1a3bL5hVVibgbaJ7zM3uUJU1iHUgxxpVkU
     key: edpkudGVZdkJRpLXjukh22MrRRJ4puXdn7htgbtGTzRFNkFVbhqH2j
     bootstrap_balance: "1500000000000"
     is_bootstrap_baker_account: true
     type: secret
-    dal_node_rpc_url: http://dal-dal1:10732
+    dal_node_rpc_url: ""
   injector:
     # jstz-node operations
     # tz1i9R2LwT3SYT9v2NSmwszEXgcViwc3cefY

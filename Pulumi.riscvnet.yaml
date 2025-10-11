@@ -19,3 +19,5 @@ config:
     secure: AAABAHolmYMQiGYA68OczUnGfR80MM74bgv5vWsp3+J3OHdFqHRFV5LNoSkbP56brJKy/ongVh9sscETefUTF7rd75VmjJSjZfab6nca94YPommX8bE=
   gcp:project: jstz-dev-dbc1
   gcp:region: europe-west2
+  teztnets:gcp-project: jstz-dev-dbc1
+  teztnets:gcp-region: europe-west2
