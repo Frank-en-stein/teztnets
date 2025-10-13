@@ -144,7 +144,7 @@ nodes:
         TEZOS_LOG_LEVEL: "info"
         TEZOS_LOG_FORMAT: "json"
       baker:
-        BAKER_EXTRA_ARGS: ""
+        BAKER_EXTRA_ARGS: "--without-dal"
     instances:
       - bake_using_accounts:
           - activator
@@ -157,6 +157,11 @@ nodes:
         config:
           shell:
             history_mode: archive
+          p2p:
+            listen-addr: ":9732"
+            limits:
+              min-connections: 0
+              max-connections: 50
           rpc:
             cors-headers: [ "content-type" ]
             cors-origin: [ "*" ]
@@ -177,9 +182,29 @@ nodes:
       - accuser
       - vdf
     bootstrapped_readiness_probe: false
-    storage_size: 100Gi
+    storage_size: 200Gi  # Doubled from 100Gi
+    # Node affinity to schedule on baking node pool
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: node-class
+            operator: In
+            values:
+            - tezos-baking-node
+    # Tolerations to allow scheduling on tainted nodes
+    tolerations:
+    - key: node-class
+      operator: Equal
+      value: tezos-baking-node
+      effect: NoSchedule
+  # Explicitly disable rolling-node in nodes section
+  rolling-node: null
 
 
+
+# Overwrite default values.yaml rolling-node
+rolling-node: false
 
 dalNodes: {}
 
@@ -190,8 +215,7 @@ dal_deploy_slot_injector:
   dal_node_rpc_url: ""
   slot_size: 65536
 
-bootstrap_peers:
-  - p2p.riscvnet.jstz.info
+bootstrap_peers: []
 
 full_snapshot_url: null
 rolling_snapshot_url: null

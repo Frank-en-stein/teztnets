@@ -20,8 +20,6 @@ const riscvnetBootstrap4Key = cfg.requireSecret("riscvnet-bootstrap4-key")
 const riscvnetBootstrap5Key = cfg.requireSecret("riscvnet-bootstrap5-key")
 const riscvnetFaucetKey = cfg.requireSecret("riscvnet-faucet-key")
 
-const faucetRecaptchaSiteKey = cfg.requireSecret("faucet-recaptcha-site-key")
-const faucetRecaptchaSecretKey = cfg.requireSecret("faucet-recaptcha-secret-key")
 
 // Reserve static IP for P2P endpoint (only P2P needs static IP for external nodes)
 const p2pStaticIp = new gcp.compute.Address("riscvnet-p2p-ip", {
@@ -64,20 +62,52 @@ const cluster = new gcp.container.Cluster("riscvnet-cluster", {
     },
 })
 
-const nodePool = new gcp.container.NodePool("riscvnet-nodes", {
-    name: "riscvnet-node-pool",
+// Create node pool for tezos-baking-node (doubled resources)
+const bakingNodePool = new gcp.container.NodePool("riscvnet-baking-nodes", {
+    name: "riscvnet-baking-node-pool",
     location: gcpRegion,
     cluster: cluster.name,
-    nodeCount: 3,
+    nodeCount: 1,
     project: gcpProject,
     nodeConfig: {
-        machineType: "n1-standard-4",
+        machineType: "n1-standard-8", // Doubled from n1-standard-4
         oauthScopes: [
             "https://www.googleapis.com/auth/compute",
             "https://www.googleapis.com/auth/devstorage.read_only",
             "https://www.googleapis.com/auth/logging.write",
             "https://www.googleapis.com/auth/monitoring",
         ],
+        labels: {
+            "node-class": "tezos-baking-node",
+        },
+        taints: [
+            {
+                key: "node-class",
+                value: "tezos-baking-node",
+                effect: "NO_SCHEDULE",
+            },
+        ],
+    },
+}, { ignoreChanges: ["nodeConfig"] })
+
+// Create node pool for other nodes (halved resources)
+const standardNodePool = new gcp.container.NodePool("riscvnet-standard-nodes", {
+    name: "riscvnet-standard-node-pool",
+    location: gcpRegion,
+    cluster: cluster.name,
+    nodeCount: 2,
+    project: gcpProject,
+    nodeConfig: {
+        machineType: "n1-standard-2", // Halved from n1-standard-4
+        oauthScopes: [
+            "https://www.googleapis.com/auth/compute",
+            "https://www.googleapis.com/auth/devstorage.read_only",
+            "https://www.googleapis.com/auth/logging.write",
+            "https://www.googleapis.com/auth/monitoring",
+        ],
+        labels: {
+            "node-class": "standard",
+        },
     },
 }, { ignoreChanges: ["nodeConfig"] })
 
@@ -115,7 +145,7 @@ users:
 // Kubernetes provider
 const k8sProvider = new k8s.Provider("gke-k8s", {
     kubeconfig: kubeconfig,
-}, { dependsOn: [nodePool] })
+}, { dependsOn: [bakingNodePool, standardNodePool] })
 
 // Create namespace for riscvnet
 const namespace = new k8s.core.v1.Namespace("riscvnet", {
@@ -177,6 +207,9 @@ helmValues["logExport"] = {
     namespace: namespace.metadata.name,
 }
 
+// Note: Helm chart probe overrides don't work reliably, so we use post-deployment patching instead
+// See patchJob below for the actual probe configuration
+
 // LoadBalancer services created separately below via Pulumi (helm chart rpc_public/p2p_public not working)
 // Service monitoring temporarily disabled
 // helmValues["serviceMonitor"] = {
@@ -193,6 +226,122 @@ const tezosChart = new k8s.helm.v3.Chart("riscvnet-tezos", {
     },
     values: helmValues,
 }, { provider: k8sProvider, dependsOn: [namespace] })
+
+// Patch the StatefulSet to fix readiness probes after Helm chart deployment
+const statefulSetPatch = new k8s.core.v1.ConfigMap("riscvnet-statefulset-patch", {
+    metadata: {
+        name: "statefulset-patch",
+        namespace: namespace.metadata.name,
+    },
+    data: {
+        "patch.yaml": `
+- op: replace
+  path: /spec/template/spec/containers/0/readinessProbe
+  value:
+    httpGet:
+      path: /version
+      port: 8732
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+- op: replace
+  path: /spec/template/spec/containers/0/livenessProbe
+  value:
+    httpGet:
+      path: /version
+      port: 8732
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 3
+- op: replace
+  path: /spec/template/spec/containers/0/startupProbe
+  value:
+    httpGet:
+      path: /version
+      port: 8732
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30
+`,
+    },
+}, { provider: k8sProvider, dependsOn: [tezosChart] })
+
+// Create a ServiceAccount with permissions to patch StatefulSets
+const patchServiceAccount = new k8s.core.v1.ServiceAccount("riscvnet-patch-sa", {
+    metadata: {
+        name: "patch-sa",
+        namespace: namespace.metadata.name,
+    },
+}, { provider: k8sProvider })
+
+// Create ClusterRole for patching StatefulSets
+const patchClusterRole = new k8s.rbac.v1.ClusterRole("riscvnet-patch-cr", {
+    metadata: {
+        name: "patch-cr",
+    },
+    rules: [{
+        apiGroups: ["apps"],
+        resources: ["statefulsets"],
+        verbs: ["get", "patch", "update"],
+    }],
+}, { provider: k8sProvider })
+
+// Create ClusterRoleBinding
+const patchClusterRoleBinding = new k8s.rbac.v1.ClusterRoleBinding("riscvnet-patch-crb", {
+    metadata: {
+        name: "patch-crb",
+    },
+    roleRef: {
+        apiGroup: "rbac.authorization.k8s.io",
+        kind: "ClusterRole",
+        name: patchClusterRole.metadata.name,
+    },
+    subjects: [{
+        kind: "ServiceAccount",
+        name: patchServiceAccount.metadata.name,
+        namespace: namespace.metadata.name,
+    }],
+}, { provider: k8sProvider })
+
+// Create a Job to patch the StatefulSet with correct probe configuration
+const patchJob = new k8s.batch.v1.Job("riscvnet-probe-patch-job-v2", {
+    metadata: {
+        name: "probe-patch-job-v2",
+        namespace: namespace.metadata.name,
+    },
+    spec: {
+        template: {
+            spec: {
+                serviceAccountName: patchServiceAccount.metadata.name,
+                restartPolicy: "OnFailure",
+                containers: [{
+                    name: "kubectl",
+                    image: "bitnami/kubectl:latest",
+                    command: ["/bin/sh"],
+                    args: [
+                        "-c",
+                        `
+                        # Wait for StatefulSet to be created
+                        kubectl wait --for=condition=Ready --timeout=300s statefulset/tezos-baking-node -n riscvnet || true
+                        
+                        # Apply the patch
+                        kubectl patch statefulset tezos-baking-node -n riscvnet --type='json' -p='[
+                            {"op": "replace", "path": "/spec/template/spec/containers/0/readinessProbe", "value": {"httpGet": {"path": "/version", "port": 8732}, "initialDelaySeconds": 10, "periodSeconds": 10, "timeoutSeconds": 5, "failureThreshold": 3}},
+                            {"op": "replace", "path": "/spec/template/spec/containers/0/livenessProbe", "value": {"httpGet": {"path": "/version", "port": 8732}, "initialDelaySeconds": 30, "periodSeconds": 30, "timeoutSeconds": 10, "failureThreshold": 3}},
+                            {"op": "replace", "path": "/spec/template/spec/containers/0/startupProbe", "value": {"httpGet": {"path": "/version", "port": 8732}, "initialDelaySeconds": 5, "periodSeconds": 10, "timeoutSeconds": 5, "failureThreshold": 30}}
+                        ]'
+                        
+                        echo "StatefulSet patched successfully"
+                        `,
+                    ],
+                }],
+            },
+        },
+    },
+}, { provider: k8sProvider, dependsOn: [tezosChart, statefulSetPatch, patchServiceAccount, patchClusterRole, patchClusterRoleBinding] })
 
 // Load faucet values
 const faucetValuesFile = fs.readFileSync("networks/riscvnet/faucet_values.yaml", "utf8")
@@ -240,8 +389,8 @@ const rpcService = new k8s.core.v1.Service("riscvnet-rpc-service", {
     spec: {
         type: "ClusterIP",
         ports: [{
-            port: 8732,
-            targetPort: 8732,
+            port: 8732, // Route RPC traffic to octez-node container
+            targetPort: 8732, // Direct to octez-node container
             protocol: "TCP",
             name: "rpc",
         }],
@@ -266,8 +415,8 @@ const rpcBackendConfig = new k8s.apiextensions.CustomResource("riscvnet-rpc-back
             healthyThreshold: 1,
             unhealthyThreshold: 3,
             type: "HTTP",
-            port: 8732,
-            requestPath: "/version",
+            port: 8732, // Health check on same port as service
+            requestPath: "/version", // Use /version endpoint from octez-node
         },
         timeoutSec: 30,
     },
