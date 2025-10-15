@@ -41,6 +41,12 @@ export class TezosFaucet extends pulumi.ComponentResource {
     this.tezosFaucetHelmValues["faucetPrivateKey"] = params.faucetPrivateKey
     let chartParams = getChartParams(params, "tezos-faucet");
 
+    // Ensure Redis is completely removed when challenges are disabled
+    if (this.tezosFaucetHelmValues.disableChallenges === true) {
+      // Remove Redis configuration entirely to prevent connection attempts
+      delete this.tezosFaucetHelmValues.redis;
+    }
+
     if (this.tezosFaucetHelmValues.disableChallenges !== true) {
       if (!this.tezosFaucetHelmValues.redis) {
         this.tezosFaucetHelmValues.redis = {}
@@ -64,10 +70,6 @@ export class TezosFaucet extends pulumi.ComponentResource {
             repo: "https://charts.bitnami.com/bitnami",
           },
           values: {
-	    image: {
-		repository: "docker.io/bitnamilegacy",
-		tag: "latest",
-	    },
             // Keep the resource names short and simple
             fullnameOverride: "redis",
             // Deploy a single instance
@@ -89,7 +91,7 @@ export class TezosFaucet extends pulumi.ComponentResource {
       )
     }
 
-    const teztnetsDomain = `${name}.teztnets.com`
+    const teztnetsDomain = `${name}.jstz.info`
     const faucetDomain = `faucet.${teztnetsDomain}`
     this.tezosFaucetHelmValues.googleCaptchaSecretKey =
       params.faucetRecaptchaSecretKey

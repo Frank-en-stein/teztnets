@@ -6,8 +6,8 @@ images:
 env:
   LOG_LEVEL: "info"
   LOG_FORMAT: "json"
-  # Enable reCAPTCHA and challenges
-  DISABLE_CHALLENGES: "false"
+  # Disable challenges to avoid Redis deployment
+  DISABLE_CHALLENGES: "true"
   ENABLE_CAPTCHA: "true"
 
 # Frontend app configuration. You can optionally deploy only the faucet backend.
@@ -15,14 +15,14 @@ enableUI: true
 config:
   application:
     name: "Tezos Riscvnet Faucet"
-    disableChallenges: false
-    googleCaptchaSiteKey: "6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI"  # Test key
+    disableChallenges: true
+    googleCaptchaSiteKey: ""  # Will be overridden by Pulumi from index.ts
     backendUrl: "" # filled in by pulumi
     githubRepo: https://github.com/tacoinfra/tezos-faucet
   network:
     name: custom
     rpcUrl: "" # filled in by pulumi
-    faucetAddress: tz1P2DqS58eSkefYpNwmF2Vu2c6fJUx1a9A7
+    faucetAddress: "" # Will be derived from riscvnet-faucet-key
 
 # Value the server sets for the "Access-Control-Allow-Origin" header for CORS.
 authorizedHost: "" # filled in by pulumi
@@ -40,7 +40,7 @@ minTez: 1
 # The maximum Tez allowed per request.
 maxTez: 40000
 
-disableChallenges: false
+disableChallenges: true
 # Minimum number of challenges required for the minimum Tez request.
 minChallenges: 1
 # Maximum number of challenges required for the maximum Tez request.
@@ -54,11 +54,6 @@ maxChallengesWithCaptcha: 53
 challengeSize: 2048
 # Difficulty level for challenges.
 difficulty: 4
-
-# Redis disabled - faucet will use in-memory storage
-redis:
-  deploy: true
-  url: ""
 
 # Service - Using LoadBalancer to get external IP instead of ingress
 service:

@@ -1,5 +1,5 @@
 node_config_network:
-  activation_account_name: activator
+  activation_account_name: teztnetsbaker
   chain_name: TEZOS_RISKVNET_2025-09-11T12:00:00Z
   genesis:
     protocol: Ps9mPmXaRzmzk35gbAYNCAw6UXdE2qoABTHbN2oEEc1qM7CwT9P
@@ -140,32 +140,23 @@ nodes:
     env:
       all:
         TEZOS_CLIENT_UNSAFE_DISABLE_DISCLAIMER: "Y"
-        # Configure structured logging for Google Cloud Logging
-        TEZOS_LOG_LEVEL: "info"
-        TEZOS_LOG_FORMAT: "json"
       baker:
         BAKER_EXTRA_ARGS: "--without-dal"
     instances:
       - bake_using_accounts:
-          - activator
+          - teztnetsbaker
           - bootstrap1
           - bootstrap2
           - bootstrap3
           - bootstrap4
           - bootstrap5
-        dal_node_rpc_url: ""
         config:
           shell:
             history_mode: archive
-          p2p:
-            listen-addr: ":9732"
-            limits:
-              min-connections: 0
-              max-connections: 50
           rpc:
             cors-headers: [ "content-type" ]
             cors-origin: [ "*" ]
-            max_active_rpc_connections: 1000
+            max_active_rpc_connections: 5000  # Reduced - external rolling nodes will handle public RPC
           metrics_addr: ["0.0.0.0:9932"]
         is_bootstrap_node: true
         identity:
@@ -182,31 +173,20 @@ nodes:
       - accuser
       - vdf
     bootstrapped_readiness_probe: false
-    storage_size: 200Gi  # Doubled from 100Gi
-    # Node affinity to schedule on baking node pool
-    nodeAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        nodeSelectorTerms:
-        - matchExpressions:
-          - key: node-class
-            operator: In
-            values:
-            - tezos-baking-node
-    # Tolerations to allow scheduling on tainted nodes
-    tolerations:
-    - key: node-class
-      operator: Equal
-      value: tezos-baking-node
-      effect: NoSchedule
-  # Explicitly disable rolling-node in nodes section
+    readinessProbe:
+      httpGet:
+        path: /version
+        port: 8732
+      initialDelaySeconds: 60
+      periodSeconds: 20              # Check every 20 seconds instead of 10
+      timeoutSeconds: 10              # Wait 10 seconds instead of 1 (10x increase!)
+      failureThreshold: 10            # Allow 10 failures instead of 3 (3.3x increase!)
+      successThreshold: 1             # Only need 1 success to mark ready again
+    storage_size: 200Gi
+  # Overwrite default values.yaml rolling-node
   rolling-node: null
 
-
-
-# Overwrite default values.yaml rolling-node
-rolling-node: false
-
-dalNodes: {}
+dalNodes: []
 
 dal_deploy_slot_injector:
   enabled: false
@@ -235,10 +215,9 @@ protocols:
       liquidity_baking_toggle_vote: "pass"
 
 accounts:
-  activator:
-    # Protocol activation + baking
-    # tz1a3bL5hVVibgbaJ7zM3uUJU1iHUgxxpVkU
-    key: edpkudGVZdkJRpLXjukh22MrRRJ4puXdn7htgbtGTzRFNkFVbhqH2j
+  teztnetsbaker:
+    # Protocol activation + baking (populated by Pulumi from riscvnet-activator-key)
+    key: "PLACEHOLDER_WILL_BE_REPLACED_BY_PULUMI"
     bootstrap_balance: "1500000000000"
     is_bootstrap_baker_account: true
     type: secret
@@ -258,37 +237,32 @@ accounts:
     is_bootstrap_baker_account: false
     bootstrap_balance: "100000000000"
   bootstrap1:
-    # General purpose/baking
-    # tz1VMefR9MZE65reQ7LcnHDJhGkPTCMoCFDj
-    key: edpkuBEirLHmeviFVNm2fTUMmdm674NncoC6VMK8dnuwkf6NJBk3ta
+    # General purpose/baking (populated by Pulumi from riscvnet-bootstrap1-key)
+    key: "PLACEHOLDER_WILL_BE_REPLACED_BY_PULUMI"
     type: secret
     is_bootstrap_baker_account: true
     bootstrap_balance: "100000000000"
   bootstrap2:
-    # General purpose/baking
-    # tz1TLYAfMhK2vYNxyRPGBSDSgftdgcfKhZrF
-    key: edpktiuF7X5gU6YBewZLA6nM8moFYYNf7TTxTrHZsma9T1U3bRRker
+    # General purpose/baking (populated by Pulumi from riscvnet-bootstrap2-key)
+    key: "PLACEHOLDER_WILL_BE_REPLACED_BY_PULUMI"
     type: secret
     is_bootstrap_baker_account: true
     bootstrap_balance: "100000000000"
   bootstrap3:
-    # General purpose/baking
-    # tz1dgh1aw1qqNjkViP1jGLCe2Pyx57Wx2VCD
-    key: edpkuNWkEuvub9fbTVmgJKmcHf6d6XYm6qGUd64xyS6AmhBryWD8xD
+    # General purpose/baking (populated by Pulumi from riscvnet-bootstrap3-key)
+    key: "PLACEHOLDER_WILL_BE_REPLACED_BY_PULUMI"
     type: secret
     is_bootstrap_baker_account: true
     bootstrap_balance: "100000000000"
   bootstrap4:
-    # General purpose/baking
-    # tz1XicAULnibeqjXBsBYKARBWxGiohKYuPr9
-    key: edpkuWwrzsT6Voi4bAg2wtFAJKLHwFQ4vQJvwSNuRnBU6hF6MEsgVq
+    # General purpose/baking (populated by Pulumi from riscvnet-bootstrap4-key)
+    key: "PLACEHOLDER_WILL_BE_REPLACED_BY_PULUMI"
     type: secret
     is_bootstrap_baker_account: true
     bootstrap_balance: "100000000000"
   bootstrap5:
-    # General purpose/baking
-    # tz1eEQR5Gf9jnFxtWYn5LUGLCmUHW7rRFjBp
-    key: edpkuJj5YqaZ2vrsJ6AHSFaAxBiXCiGCnWoGsWKAGrjvzpAx57dziW
+    # General purpose/baking (populated by Pulumi from riscvnet-bootstrap5-key)
+    key: "PLACEHOLDER_WILL_BE_REPLACED_BY_PULUMI"
     type: secret
     is_bootstrap_baker_account: true
     bootstrap_balance: "100000000000"

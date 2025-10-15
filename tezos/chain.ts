@@ -24,10 +24,11 @@ export interface TezosParameters {
   readonly helmValuesFile: string
   readonly schedule?: string
   readonly networkStakes?: boolean
+  readonly bootstrapAccountKeys?: { [accountName: string]: pulumi.Output<string> }
 }
 
 const gcpRegion = "us-central1";
-const domainName = 'teztnets.com';
+const domainName = 'jstz.info';
 
 /**
  * Deploy a tezos-k8s topology in a k8s cluster.
@@ -99,6 +100,15 @@ export class TezosChain extends pulumi.ComponentResource {
     );
 
     this.tezosHelmValues["accounts"]["teztnetsbaker"]["key"] = this.params.bakingPrivateKey
+
+    // Set additional bootstrap account keys if provided
+    if (this.params.bootstrapAccountKeys) {
+      Object.entries(this.params.bootstrapAccountKeys).forEach(([accountName, key]) => {
+        if (this.tezosHelmValues["accounts"][accountName]) {
+          this.tezosHelmValues["accounts"][accountName]["key"] = key
+        }
+      })
+    }
 
     if (this.params.schedule) {
       const deployDate = new Date(
@@ -220,6 +230,8 @@ export class TezosChain extends pulumi.ComponentResource {
             "cert-manager.io/cluster-issuer": "letsencrypt-prod",
             "nginx.ingress.kubernetes.io/enable-cors": "true",
             "nginx.ingress.kubernetes.io/cors-allow-origin": "*",
+            // Skip await since we're using GKE ingress in index.ts instead
+            "pulumi.com/skipAwait": "true",
           },
           labels: { app: "tezos-node" },
         },
@@ -233,7 +245,14 @@ export class TezosChain extends pulumi.ComponentResource {
           ],
         },
       },
-      { provider, parent: this }
+      {
+        provider,
+        parent: this,
+        customTimeouts: {
+          create: "10m",
+          update: "10m",
+        }
+      }
     )
 
 

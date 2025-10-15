@@ -12,8 +12,7 @@ const gcpProject = cfg.get("gcp-project") || "jstz-dev-dbc1"
 const gcpRegion = cfg.get("gcp-region") || "europe-west2"
 const clusterName = cfg.get("cluster-name") || "riscvnet-cluster"
 
-// Riscvnet secret keys from Pulumi config
-// All keys are stored as Pulumi secrets and passed to the Helm charts
+// Riscvnet secret keys from GCP Secret Manager
 const riscvnetActivatorKey = cfg.requireSecret("riscvnet-activator-key")
 const riscvnetBootstrap1Key = cfg.requireSecret("riscvnet-bootstrap1-key")
 const riscvnetBootstrap2Key = cfg.requireSecret("riscvnet-bootstrap2-key")
@@ -27,7 +26,6 @@ const activationBucket = new gcp.storage.Bucket("testnets-global-activation-buck
   location: "US",
   uniformBucketLevelAccess: true,
   storageClass: "STANDARD",
-  project: gcpProject,
 });
 
 // Set the bucket to be publicly readable
@@ -55,7 +53,7 @@ const cluster = new gcp.container.Cluster("riscvnet-cluster", {
     },
 })
 
-// Create node pool for tezos-baking-node
+// Create node pool for tezos-baking-node (doubled resources)
 const bakingNodePool = new gcp.container.NodePool("riscvnet-baking-nodes", {
     name: "riscvnet-baking-node-pool",
     location: gcpRegion,
@@ -63,7 +61,7 @@ const bakingNodePool = new gcp.container.NodePool("riscvnet-baking-nodes", {
     nodeCount: 1,
     project: gcpProject,
     nodeConfig: {
-        machineType: "n1-standard-8",
+        machineType: "n1-standard-8", // Doubled from n1-standard-4
         oauthScopes: [
             "https://www.googleapis.com/auth/compute",
             "https://www.googleapis.com/auth/devstorage.read_only",
@@ -83,7 +81,7 @@ const bakingNodePool = new gcp.container.NodePool("riscvnet-baking-nodes", {
     },
 }, { ignoreChanges: ["nodeConfig"] })
 
-// Create node pool for other nodes
+// Create node pool for other nodes (halved resources)
 const standardNodePool = new gcp.container.NodePool("riscvnet-standard-nodes", {
     name: "riscvnet-standard-node-pool",
     location: gcpRegion,
@@ -91,7 +89,7 @@ const standardNodePool = new gcp.container.NodePool("riscvnet-standard-nodes", {
     nodeCount: 2,
     project: gcpProject,
     nodeConfig: {
-        machineType: "n1-standard-2",
+        machineType: "n1-standard-2", // Halved from n1-standard-4
         oauthScopes: [
             "https://www.googleapis.com/auth/compute",
             "https://www.googleapis.com/auth/devstorage.read_only",
@@ -105,43 +103,35 @@ const standardNodePool = new gcp.container.NodePool("riscvnet-standard-nodes", {
 }, { ignoreChanges: ["nodeConfig"] })
 
 // Create kubeconfig
-const kubeconfig = pulumi.all([cluster.name, cluster.endpoint, cluster.masterAuth]).apply(
-    ([name, endpoint, masterAuth]) => {
-        const context = `gke_${gcpProject}_${gcpRegion}_${name}`;
-        const config = {
-            apiVersion: "v1",
-            clusters: [{
-                cluster: {
-                    "certificate-authority-data": masterAuth.clusterCaCertificate,
-                    server: `https://${endpoint}`
-                },
-                name: context
-            }],
-            contexts: [{
-                context: {
-                    cluster: context,
-                    user: context
-                },
-                name: context
-            }],
-            "current-context": context,
-            kind: "Config",
-            preferences: {},
-            users: [{
-                name: context,
-                user: {
-                    exec: {
-                        apiVersion: "client.authentication.k8s.io/v1beta1",
-                        command: "gke-gcloud-auth-plugin",
-                        installHint: "Install gke-gcloud-auth-plugin for use with kubectl",
-                        provideClusterInfo: true
-                    }
-                }
-            }]
-        };
-        return JSON.stringify(config);
-    }
-)
+const kubeconfig = pulumi.
+    all([cluster.name, cluster.endpoint, cluster.masterAuth]).
+    apply(([name, endpoint, masterAuth]) => {
+        const context = `gke_${gcpProject}_${gcpRegion}_${name}`
+        return `apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: ${masterAuth.clusterCaCertificate}
+    server: https://${endpoint}
+  name: ${context}
+contexts:
+- context:
+    cluster: ${context}
+    user: ${context}
+  name: ${context}
+current-context: ${context}
+kind: Config
+preferences: {}
+users:
+- name: ${context}
+  user:
+    exec:
+      apiVersion: client.authentication.k8s.io/v1beta1
+      command: gke-gcloud-auth-plugin
+      installHint: Install gke-gcloud-auth-plugin for use with kubectl by following
+        https://cloud.google.com/blog/products/containers-kubernetes/kubectl-auth-changes-in-gke
+      provideClusterInfo: true
+`
+    })
 
 // Kubernetes provider
 const k8sProvider = new k8s.Provider("gke-k8s", {
@@ -154,7 +144,7 @@ const ingressStaticIp = new gcp.compute.GlobalAddress("riscvnet-ingress-ip", {
     project: gcpProject,
 })
 
-// Deploy riscvnet using TezosChain with bootstrap account keys
+// Deploy riscvnet using TezosChain class
 const riscvnet_chain = new TezosChain(
   {
     category: "Protocol Teztnets",
@@ -164,19 +154,10 @@ const riscvnet_chain = new TezosChain(
     helmValuesFile: "networks/riscvnet/values.yaml",
     bakingPrivateKey: riscvnetActivatorKey,
     chartRepoVersion: "7.2.0",
-    bootstrapPeers: [],
+    bootstrapPeers: [], // Empty for standalone testnet
     rpcUrls: [],
     indexers: [],
     networkStakes: true,
-    // Pass all bootstrap account keys to be injected into helm values
-    bootstrapAccountKeys: {
-      bootstrap1: riscvnetBootstrap1Key,
-      bootstrap2: riscvnetBootstrap2Key,
-      bootstrap3: riscvnetBootstrap3Key,
-      bootstrap4: riscvnetBootstrap4Key,
-      bootstrap5: riscvnetBootstrap5Key,
-      faucet: riscvnetFaucetKey,
-    },
   },
   k8sProvider
 )
@@ -189,10 +170,8 @@ new TezosFaucet(
     namespace: riscvnet_chain.namespace,
     helmValuesFile: "networks/riscvnet/faucet_values.yaml",
     faucetPrivateKey: riscvnetFaucetKey,
-    // Google's official test keys that always pass validation
-    // For production, replace with real keys from https://www.google.com/recaptcha/admin
-    faucetRecaptchaSiteKey: pulumi.output("6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI"),
-    faucetRecaptchaSecretKey: pulumi.output("6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe"),
+    faucetRecaptchaSiteKey: pulumi.output(""), // Disabled
+    faucetRecaptchaSecretKey: pulumi.output(""), // Disabled
     chartRepoVersion: "7.2.0",
   },
   k8sProvider
@@ -223,13 +202,73 @@ const faucetSslCert = new k8s.apiextensions.CustomResource("riscvnet-faucet-ssl-
     },
 }, { provider: k8sProvider })
 
-// Note: tezos-k8s helm chart creates the services we need:
-// - tezos-node-rpc: RPC service for octez node (port 8732)
-// - riscvnet-faucet-backend: Faucet backend service (port 3000)
-// We just need to create the GKE Ingress pointing to these services
+// Create ClusterIP services (internal only) for RPC and Faucet
+const rpcService = new k8s.core.v1.Service("riscvnet-rpc-service", {
+    metadata: {
+        name: "riscvnet-rpc-service",
+        namespace: riscvnet_chain.namespace.metadata.name,
+        annotations: {
+            "cloud.google.com/neg": '{"ingress":true}',
+            "cloud.google.com/backend-config": '{"default": "rpc-backend-config"}',
+        },
+    },
+    spec: {
+        type: "ClusterIP",
+        ports: [{
+            port: 8732, // Route RPC traffic to octez-node container
+            targetPort: 8732, // Direct to octez-node container
+            protocol: "TCP",
+            name: "rpc",
+        }],
+        selector: {
+            node_class: "tezos-baking-node",
+        },
+    },
+}, { provider: k8sProvider })
 
-// Create GKE Ingress for HTTPS (using services created by helm charts)
-new k8s.networking.v1.Ingress("riscvnet-https-ingress", {
+// Create BackendConfig for RPC service with health check on octez-node /version endpoint
+const rpcBackendConfig = new k8s.apiextensions.CustomResource("riscvnet-rpc-backend-config", {
+    apiVersion: "cloud.google.com/v1",
+    kind: "BackendConfig",
+    metadata: {
+        name: "rpc-backend-config",
+        namespace: riscvnet_chain.namespace.metadata.name,
+    },
+    spec: {
+        healthCheck: {
+            checkIntervalSec: 10,
+            timeoutSec: 5,
+            healthyThreshold: 1,
+            unhealthyThreshold: 3,
+            type: "HTTP",
+            port: 8732, // Health check on octez-node port
+            requestPath: "/version", // Use /version endpoint from octez-node
+        },
+        timeoutSec: 30,
+    },
+}, { provider: k8sProvider })
+
+const faucetService = new k8s.core.v1.Service("riscvnet-faucet-service", {
+    metadata: {
+        name: "riscvnet-faucet-service",
+        namespace: riscvnet_chain.namespace.metadata.name,
+    },
+    spec: {
+        type: "ClusterIP",
+        ports: [{
+            port: 8080,
+            targetPort: 8080,
+            protocol: "TCP",
+            name: "http",
+        }],
+        selector: {
+            app: "tezos-faucet",
+        },
+    },
+}, { provider: k8sProvider })
+
+// Create GKE Ingress for HTTPS (RPC and Faucet)
+const httpsIngress = new k8s.networking.v1.Ingress("riscvnet-https-ingress", {
     metadata: {
         name: "riscvnet-https-ingress",
         namespace: riscvnet_chain.namespace.metadata.name,
@@ -249,7 +288,7 @@ new k8s.networking.v1.Ingress("riscvnet-https-ingress", {
                         pathType: "ImplementationSpecific",
                         backend: {
                             service: {
-                                name: "tezos-node-rpc",
+                                name: rpcService.metadata.name,
                                 port: { number: 8732 },
                             },
                         },
@@ -264,7 +303,7 @@ new k8s.networking.v1.Ingress("riscvnet-https-ingress", {
                         pathType: "ImplementationSpecific",
                         backend: {
                             service: {
-                                name: "tezos-faucet",
+                                name: faucetService.metadata.name,
                                 port: { number: 8080 },
                             },
                         },
@@ -273,10 +312,10 @@ new k8s.networking.v1.Ingress("riscvnet-https-ingress", {
             },
         ],
     },
-}, { provider: k8sProvider, dependsOn: [rpcSslCert, faucetSslCert] })
+}, { provider: k8sProvider, dependsOn: [rpcService, faucetService, rpcSslCert, faucetSslCert] })
 
 // Create DNS records pointing to Ingress IP
-new gcp.dns.RecordSet("riscvnet-rpc-dns", {
+const rpcDnsRecord = new gcp.dns.RecordSet("riscvnet-rpc-dns", {
     name: "rpc.riscvnet.jstz.info.",
     managedZone: "jstz-info",
     type: "A",
@@ -285,7 +324,7 @@ new gcp.dns.RecordSet("riscvnet-rpc-dns", {
     project: gcpProject,
 }, { dependsOn: [ingressStaticIp] })
 
-new gcp.dns.RecordSet("riscvnet-faucet-dns", {
+const faucetDnsRecord = new gcp.dns.RecordSet("riscvnet-faucet-dns", {
     name: "faucet.riscvnet.jstz.info.",
     managedZone: "jstz-info",
     type: "A",
@@ -303,4 +342,6 @@ export const rpcDomain = "rpc.riscvnet.jstz.info"
 export const rpcEndpoint = "https://rpc.riscvnet.jstz.info"
 export const faucetDomain = "faucet.riscvnet.jstz.info"
 export const faucetEndpoint = "https://faucet.riscvnet.jstz.info"
+export const rpcSslCertOutput = "riscvnet-rpc-ssl-cert"
+export const faucetSslCertOutput = "riscvnet-faucet-ssl-cert"
 export const logFilter = `resource.type="k8s_container" AND resource.labels.namespace_name="riscvnet"`
