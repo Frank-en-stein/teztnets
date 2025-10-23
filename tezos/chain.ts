@@ -41,6 +41,7 @@ export class TezosChain extends pulumi.ComponentResource {
   readonly params: TezosParameters
   readonly tezosHelmValues: any
   readonly namespace: k8s.core.v1.Namespace
+  readonly p2pService: k8s.core.v1.Service
   readonly dalNodes: {
     [name: string]: {
       humanName: string;
@@ -398,7 +399,7 @@ export class TezosChain extends pulumi.ComponentResource {
       { providers: { kubernetes: provider } }
     )
 
-    new k8s.core.v1.Service(
+    this.p2pService = new k8s.core.v1.Service(
       `${name}-p2p-lb`,
       {
         metadata: {

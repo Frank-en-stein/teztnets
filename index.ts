@@ -294,6 +294,17 @@ new gcp.dns.RecordSet("riscvnet-faucet-dns", {
     project: gcpProject,
 }, { dependsOn: [ingressStaticIp] })
 
+// Create DNS record for P2P endpoint (LoadBalancer external IP)
+// The P2P service is created in TezosChain and exposed as riscvnet_chain.p2pService
+new gcp.dns.RecordSet("riscvnet-p2p-dns", {
+    name: "riscvnet.jstz.info.",
+    managedZone: "jstz-info",
+    type: "A",
+    ttl: 300,
+    rrdatas: [riscvnet_chain.p2pService.status.loadBalancer.ingress[0].ip],
+    project: gcpProject,
+}, { dependsOn: [riscvnet_chain.p2pService] })
+
 // Export useful information
 export const clusterNameOutput = cluster.name
 export const kubeconfigOutput = kubeconfig
@@ -303,4 +314,7 @@ export const rpcDomain = "rpc.riscvnet.jstz.info"
 export const rpcEndpoint = "https://rpc.riscvnet.jstz.info"
 export const faucetDomain = "faucet.riscvnet.jstz.info"
 export const faucetEndpoint = "https://faucet.riscvnet.jstz.info"
+export const p2pDomain = "riscvnet.jstz.info"
+export const p2pEndpoint = riscvnet_chain.p2pService.status.loadBalancer.ingress[0].ip.apply(ip => `${ip}:9732`)
+export const p2pPeerId = "idqnaeAw4oGfUEnKrLH2fZYRQo4Ev1"
 export const logFilter = `resource.type="k8s_container" AND resource.labels.namespace_name="riscvnet"`

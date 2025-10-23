@@ -145,18 +145,16 @@ nodes:
     instances:
       - bake_using_accounts:
           - teztnetsbaker
-          - bootstrap1
-          - bootstrap2
-          - bootstrap3
-          - bootstrap4
-          - bootstrap5
+          # REMOVED: bootstrap1-5 to prevent RPC connection exhaustion
+          # Only one baker container will be created, reducing RPC load by 83%
+          # bootstrap1-5 remain as funded accounts but won't actively bake
         config:
           shell:
             history_mode: archive
           rpc:
             cors-headers: [ "content-type" ]
             cors-origin: [ "*" ]
-            max_active_rpc_connections: 5000  # Reduced - external rolling nodes will handle public RPC
+            max_active_rpc_connections: 1000  # Reduced for single baker setup
           metrics_addr: ["0.0.0.0:9932"]
         is_bootstrap_node: true
         identity:
@@ -172,17 +170,11 @@ nodes:
       - baker
       - accuser
       - vdf
+    # Disable bootstrapped readiness probe to use RPC /version endpoint instead
+    # Note: tezos-k8s chart doesn't support custom probe timeouts, uses defaults
     bootstrapped_readiness_probe: false
-    readinessProbe:
-      httpGet:
-        path: /version
-        port: 8732
-      initialDelaySeconds: 60
-      periodSeconds: 20              # Check every 20 seconds instead of 10
-      timeoutSeconds: 10              # Wait 10 seconds instead of 1 (10x increase!)
-      failureThreshold: 10            # Allow 10 failures instead of 3 (3.3x increase!)
-      successThreshold: 1             # Only need 1 success to mark ready again
-    storage_size: 200Gi
+    rpc_readiness_probe: true
+    storage_size: 200Gi  # Right-sized for small testnet
   # Overwrite default values.yaml rolling-node
   rolling-node: null
 
@@ -237,34 +229,35 @@ accounts:
     is_bootstrap_baker_account: false
     bootstrap_balance: "100000000000"
   bootstrap1:
-    # General purpose/baking (populated by Pulumi from riscvnet-bootstrap1-key)
+    # General purpose funded account (populated by Pulumi from riscvnet-bootstrap1-key)
+    # NOTE: Not actively baking - only teztnetsbaker bakes to prevent RPC overload
     key: "PLACEHOLDER_WILL_BE_REPLACED_BY_PULUMI"
     type: secret
-    is_bootstrap_baker_account: true
+    is_bootstrap_baker_account: false
     bootstrap_balance: "100000000000"
   bootstrap2:
-    # General purpose/baking (populated by Pulumi from riscvnet-bootstrap2-key)
+    # General purpose funded account (populated by Pulumi from riscvnet-bootstrap2-key)
     key: "PLACEHOLDER_WILL_BE_REPLACED_BY_PULUMI"
     type: secret
-    is_bootstrap_baker_account: true
+    is_bootstrap_baker_account: false
     bootstrap_balance: "100000000000"
   bootstrap3:
-    # General purpose/baking (populated by Pulumi from riscvnet-bootstrap3-key)
+    # General purpose funded account (populated by Pulumi from riscvnet-bootstrap3-key)
     key: "PLACEHOLDER_WILL_BE_REPLACED_BY_PULUMI"
     type: secret
-    is_bootstrap_baker_account: true
+    is_bootstrap_baker_account: false
     bootstrap_balance: "100000000000"
   bootstrap4:
-    # General purpose/baking (populated by Pulumi from riscvnet-bootstrap4-key)
+    # General purpose funded account (populated by Pulumi from riscvnet-bootstrap4-key)
     key: "PLACEHOLDER_WILL_BE_REPLACED_BY_PULUMI"
     type: secret
-    is_bootstrap_baker_account: true
+    is_bootstrap_baker_account: false
     bootstrap_balance: "100000000000"
   bootstrap5:
-    # General purpose/baking (populated by Pulumi from riscvnet-bootstrap5-key)
+    # General purpose funded account (populated by Pulumi from riscvnet-bootstrap5-key)
     key: "PLACEHOLDER_WILL_BE_REPLACED_BY_PULUMI"
     type: secret
-    is_bootstrap_baker_account: true
+    is_bootstrap_baker_account: false
     bootstrap_balance: "100000000000"
   faucet:
     # Faucet operations
