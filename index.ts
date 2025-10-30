@@ -228,6 +228,48 @@ const faucetSslCert = new k8s.apiextensions.CustomResource("riscvnet-faucet-ssl-
 // - riscvnet-faucet-backend: Faucet backend service (port 3000)
 // We just need to create the GKE Ingress pointing to these services
 
+// Create BackendConfig to fix GCE Load Balancer rate limiting and timeout issues
+// This prevents 502s when the node is temporarily slow
+const rpcBackendConfig = new k8s.apiextensions.CustomResource("riscvnet-rpc-backend-config", {
+    apiVersion: "cloud.google.com/v1",
+    kind: "BackendConfig",
+    metadata: {
+        name: "rpc-backend-config",
+        namespace: riscvnet_chain.namespace.metadata.name,
+    },
+    spec: {
+        healthCheck: {
+            checkIntervalSec: 10,
+            timeoutSec: 10,  // Increased from default 1sec to tolerate slow responses
+            healthyThreshold: 1,
+            unhealthyThreshold: 5,  // Increased from default 2 to be more tolerant of transient failures
+            type: "HTTP",
+            port: 8732,
+            requestPath: "/version",  // Octez RPC returns 200 on /version, not /
+        },
+        timeoutSec: 60,  // Increased backend timeout from default 30sec
+        connectionDraining: {
+            drainingTimeoutSec: 60,
+        },
+    },
+}, { provider: k8sProvider, dependsOn: [riscvnet_chain] })
+
+// Patch the tezos-node-rpc service (created by Helm) to add BackendConfig annotation
+// This removes the default rate limit of 1 req/sec/endpoint that causes 502s
+const rpcServicePatch = new k8s.core.v1.ServicePatch("riscvnet-rpc-service-patch", {
+    metadata: {
+        name: "tezos-node-rpc",
+        namespace: riscvnet_chain.namespace.metadata.name,
+        annotations: {
+            "cloud.google.com/backend-config": '{"default": "rpc-backend-config"}',
+            "cloud.google.com/neg": '{"ingress": true}',
+        },
+    },
+}, {
+    provider: k8sProvider,
+    dependsOn: [rpcBackendConfig, riscvnet_chain],
+})
+
 // Create GKE Ingress for HTTPS (using services created by helm charts)
 new k8s.networking.v1.Ingress("riscvnet-https-ingress", {
     metadata: {
