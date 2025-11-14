@@ -93,12 +93,13 @@ export class TezosFaucet extends pulumi.ComponentResource {
 
     const teztnetsDomain = `${name}.jstz.info`
     const faucetDomain = `faucet.${teztnetsDomain}`
+    const faucetBackendDomain = `faucet-api.${teztnetsDomain}`
     this.tezosFaucetHelmValues.googleCaptchaSecretKey =
       params.faucetRecaptchaSecretKey
     this.tezosFaucetHelmValues.authorizedHost = `https://${faucetDomain}`
     this.tezosFaucetHelmValues.config.application.googleCaptchaSiteKey =
       params.faucetRecaptchaSiteKey
-    this.tezosFaucetHelmValues.config.application.backendUrl = `https://${faucetDomain}`
+    this.tezosFaucetHelmValues.config.application.backendUrl = `https://${faucetBackendDomain}`
     this.tezosFaucetHelmValues.config.network.name =
       this.tezosFaucetHelmValues.config.network.name || params.humanName
     this.tezosFaucetHelmValues.config.network.rpcUrl = `https://rpc.${teztnetsDomain}`

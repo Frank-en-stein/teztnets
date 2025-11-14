@@ -8,7 +8,7 @@ env:
   LOG_FORMAT: "json"
   # Disable challenges to avoid Redis deployment
   DISABLE_CHALLENGES: "true"
-  ENABLE_CAPTCHA: "true"
+  ENABLE_CAPTCHA: "false"
 
 # Frontend app configuration. You can optionally deploy only the faucet backend.
 enableUI: true
@@ -30,7 +30,7 @@ authorizedHost: "" # filled in by pulumi
 # service in the same namespace. If not set, defaults to `config.network.rpcUrl`.
 backendRpcUrl: http://tezos-node-rpc:8732
 # If the backend requires CAPTCHA tokens to be submitted.
-enableCaptcha: true
+enableCaptcha: false
 
 # Faucet won't dispense to an address if its balance exceeds this.
 maxBalance: 48000

@@ -223,10 +223,58 @@ const faucetSslCert = new k8s.apiextensions.CustomResource("riscvnet-faucet-ssl-
     },
 }, { provider: k8sProvider })
 
+const faucetApiSslCert = new k8s.apiextensions.CustomResource("riscvnet-faucet-api-ssl-cert", {
+    apiVersion: "networking.gke.io/v1",
+    kind: "ManagedCertificate",
+    metadata: {
+        name: "riscvnet-faucet-api-ssl-cert",
+        namespace: riscvnet_chain.namespace.metadata.name,
+    },
+    spec: {
+        domains: ["faucet-api.riscvnet.jstz.info"],
+    },
+}, { provider: k8sProvider })
+
 // Note: tezos-k8s helm chart creates the services we need:
 // - tezos-node-rpc: RPC service for octez node (port 8732)
-// - riscvnet-faucet-backend: Faucet backend service (port 3000)
+// - tezos-faucet: Faucet service with both frontend (8080) and backend (3000)
 // We just need to create the GKE Ingress pointing to these services
+
+// Create BackendConfig for faucet backend to fix health check
+const faucetBackendConfig = new k8s.apiextensions.CustomResource("riscvnet-faucet-backend-config", {
+    apiVersion: "cloud.google.com/v1",
+    kind: "BackendConfig",
+    metadata: {
+        name: "faucet-backend-config",
+        namespace: riscvnet_chain.namespace.metadata.name,
+    },
+    spec: {
+        healthCheck: {
+            checkIntervalSec: 15,
+            timeoutSec: 10,
+            healthyThreshold: 1,
+            unhealthyThreshold: 2,
+            type: "HTTP",
+            port: 3000,
+            requestPath: "/info",  // Backend returns JSON on /info
+        },
+    },
+}, { provider: k8sProvider })
+
+// Patch the tezos-faucet service to add BackendConfig for port 3000
+const faucetServicePatch = new k8s.core.v1.ServicePatch("riscvnet-faucet-service-patch", {
+    metadata: {
+        name: "tezos-faucet",
+        namespace: riscvnet_chain.namespace.metadata.name,
+        annotations: {
+            "cloud.google.com/backend-config": '{"ports": {"3000": "faucet-backend-config"}}',
+            "cloud.google.com/neg": '{"ingress": true}',
+        },
+    },
+}, {
+    provider: k8sProvider,
+    dependsOn: [faucetBackendConfig],
+})
 
 // Create BackendConfig to fix GCE Load Balancer rate limiting and timeout issues
 // This prevents 502s when the node is temporarily slow
@@ -277,7 +325,7 @@ new k8s.networking.v1.Ingress("riscvnet-https-ingress", {
         namespace: riscvnet_chain.namespace.metadata.name,
         annotations: {
             "kubernetes.io/ingress.global-static-ip-name": ingressStaticIp.name,
-            "networking.gke.io/managed-certificates": "riscvnet-rpc-ssl-cert,riscvnet-faucet-ssl-cert",
+            "networking.gke.io/managed-certificates": "riscvnet-rpc-ssl-cert,riscvnet-faucet-ssl-cert,riscvnet-faucet-api-ssl-cert",
             "kubernetes.io/ingress.class": "gce",
         },
     },
@@ -313,9 +361,24 @@ new k8s.networking.v1.Ingress("riscvnet-https-ingress", {
                     }],
                 },
             },
+            {
+                host: "faucet-api.riscvnet.jstz.info",
+                http: {
+                    paths: [{
+                        path: "/*",
+                        pathType: "ImplementationSpecific",
+                        backend: {
+                            service: {
+                                name: "tezos-faucet",
+                                port: { number: 3000 },
+                            },
+                        },
+                    }],
+                },
+            },
         ],
     },
-}, { provider: k8sProvider, dependsOn: [rpcSslCert, faucetSslCert] })
+}, { provider: k8sProvider, dependsOn: [rpcSslCert, faucetSslCert, faucetApiSslCert] })
 
 // Create DNS records pointing to Ingress IP
 new gcp.dns.RecordSet("riscvnet-rpc-dns", {
@@ -329,6 +392,15 @@ new gcp.dns.RecordSet("riscvnet-rpc-dns", {
 
 new gcp.dns.RecordSet("riscvnet-faucet-dns", {
     name: "faucet.riscvnet.jstz.info.",
+    managedZone: "jstz-info",
+    type: "A",
+    ttl: 300,
+    rrdatas: [ingressStaticIp.address],
+    project: gcpProject,
+}, { dependsOn: [ingressStaticIp] })
+
+new gcp.dns.RecordSet("riscvnet-faucet-api-dns", {
+    name: "faucet-api.riscvnet.jstz.info.",
     managedZone: "jstz-info",
     type: "A",
     ttl: 300,
