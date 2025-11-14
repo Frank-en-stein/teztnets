@@ -5,3 +5,4 @@ target/
 networks.json
 teztnets.json
 riscvnet-accounts-backup.json
+gke_gcloud_auth_plugin_cache
