@@ -7,12 +7,23 @@ GCP_PROJECT="${GCP_PROJECT:-jstz-dev-dbc1}"
 GCP_REGION="${GCP_REGION:-europe-west2}"
 CLUSTER_NAME="${CLUSTER_NAME:-riscvnet-cluster}"
 NAMESPACE="${NAMESPACE:-riscvnet}"
+RPC_ENDPOINT="${RPC_ENDPOINT:-https://rpc.riscvnet.jstz.info}"
+FAUCET_KEY="${FAUCET_KEY:-edsk3UGCrKQbDYTbagkQLufFvNaiaAn67HEhFj68stABcVFxyEGSSZ}"
+OCTEZ_IMAGE="${OCTEZ_IMAGE:-tezos/tezos:octez-v23.2}"
 
 # Parse arguments
 SKIP_CONFIRM=false
-if [[ "${1:-}" == "--yes" ]] || [[ "${1:-}" == "-y" ]]; then
-    SKIP_CONFIRM=true
-fi
+SKIP_FAUCET_REVEAL=false
+for arg in "$@"; do
+    case "$arg" in
+        --yes|-y)
+            SKIP_CONFIRM=true
+            ;;
+        --skip-faucet-reveal)
+            SKIP_FAUCET_REVEAL=true
+            ;;
+    esac
+done
 
 echo "=== Cleaning and recreating disks and pods in riscvnet cluster ==="
 echo "Project: $GCP_PROJECT"
@@ -302,9 +313,125 @@ echo ""
 echo "Remaining jobs:"
 kubectl get jobs -n "$NAMESPACE" 2>/dev/null || echo "None"
 
+# Reveal faucet key after network is ready
+if [ "$SKIP_FAUCET_REVEAL" = false ]; then
+    echo ""
+    echo "Step 12: Waiting for RPC endpoint to be ready and revealing faucet key..."
+    
+    # Wait for RPC endpoint to serve blockchain data
+    echo "  Waiting for $RPC_ENDPOINT to serve blockchain data..."
+    MAX_WAIT_RPC=600  # 10 minutes max wait (network bootstrap can take time)
+    WAIT_TIME=0
+    RPC_READY=false
+    
+    # Check the blocks/head endpoint which ensures node is synced and ready
+    BLOCKS_HEAD_URL="$RPC_ENDPOINT/chains/main/blocks/head"
+    
+    while [ $WAIT_TIME -lt $MAX_WAIT_RPC ]; do
+        # Check if blocks/head returns 200 with valid JSON containing chain_id
+        HTTP_CODE=$(curl -s -o /tmp/rpc_check.json -w "%{http_code}" --max-time 10 "$BLOCKS_HEAD_URL" 2>/dev/null || echo "000")
+        
+        if [ "$HTTP_CODE" = "200" ]; then
+            # Verify the response contains valid blockchain data (chain_id field)
+            if [ -f /tmp/rpc_check.json ] && grep -q '"chain_id"' /tmp/rpc_check.json 2>/dev/null; then
+                CHAIN_ID=$(grep -o '"chain_id":"[^"]*"' /tmp/rpc_check.json | head -1 | cut -d'"' -f4 || echo "")
+                if [ -n "$CHAIN_ID" ]; then
+                    echo "  ✓ RPC endpoint is serving blockchain data (chain_id: $CHAIN_ID)"
+                    RPC_READY=true
+                    rm -f /tmp/rpc_check.json
+                    break
+                fi
+            fi
+        fi
+        rm -f /tmp/rpc_check.json
+        echo "  Waiting for RPC endpoint... (${WAIT_TIME}s/${MAX_WAIT_RPC}s, HTTP: ${HTTP_CODE})"
+        sleep 10
+        WAIT_TIME=$((WAIT_TIME + 10))
+    done
+    
+    if [ "$RPC_READY" = false ]; then
+        echo "  WARNING: RPC endpoint not serving blockchain data after ${MAX_WAIT_RPC}s. Skipping faucet key revelation."
+        echo "  You may need to reveal it manually later with:"
+        echo "    docker run --rm -v ~/.tezos-client:/tmp/tezos-client -w /tmp \\"
+        echo "      $OCTEZ_IMAGE octez-client --base-dir /tmp/tezos-client \\"
+        echo "      --endpoint $RPC_ENDPOINT reveal key for faucet"
+    else
+        # Additional safety wait to ensure network is stable
+        echo "  Waiting additional 20s for network stability before revealing key..."
+        sleep 20
+        
+        # Create temporary directory for octez-client data
+        TEMP_CLIENT_DIR=$(mktemp -d)
+        trap "rm -rf $TEMP_CLIENT_DIR" EXIT
+        
+        echo "  Importing faucet key..."
+        IMPORT_OUTPUT=$(docker run --rm \
+            -v "$TEMP_CLIENT_DIR:/tmp/tezos-client" \
+            -w /tmp \
+            "$OCTEZ_IMAGE" \
+            octez-client --base-dir /tmp/tezos-client \
+            --endpoint "$RPC_ENDPOINT" \
+            import secret key faucet "unencrypted:$FAUCET_KEY" \
+            2>&1 | grep -v "Warning:" | grep -v "This is NOT" || true)
+        
+        if echo "$IMPORT_OUTPUT" | grep -q "Tezos address added\|already exists"; then
+            echo "  Key imported successfully"
+            
+            echo "  Revealing faucet key on-chain..."
+            REVEAL_OUTPUT=$(docker run --rm \
+                -v "$TEMP_CLIENT_DIR:/tmp/tezos-client" \
+                -w /tmp \
+                "$OCTEZ_IMAGE" \
+                octez-client --base-dir /tmp/tezos-client \
+                --endpoint "$RPC_ENDPOINT" \
+                reveal key for faucet \
+                2>&1 | grep -v "Warning:" | grep -v "This is NOT" || true)
+            
+            if echo "$REVEAL_OUTPUT" | grep -q "Operation successfully injected\|successfully applied"; then
+                echo "  ✓ Faucet key revealed successfully!"
+                echo "$REVEAL_OUTPUT" | grep -E "Operation hash|Operation found" || true
+            elif echo "$REVEAL_OUTPUT" | grep -q "already revealed\|no public key hash alias"; then
+                echo "  Key may already be revealed or not found. Output:"
+                echo "$REVEAL_OUTPUT" | head -5
+            else
+                echo "  WARNING: Unexpected output from reveal command:"
+                echo "$REVEAL_OUTPUT" | head -10
+            fi
+        else
+            echo "  WARNING: Key import may have failed or key already exists."
+            echo "  Attempting to reveal anyway..."
+            REVEAL_OUTPUT=$(docker run --rm \
+                -v "$TEMP_CLIENT_DIR:/tmp/tezos-client" \
+                -w /tmp \
+                "$OCTEZ_IMAGE" \
+                octez-client --base-dir /tmp/tezos-client \
+                --endpoint "$RPC_ENDPOINT" \
+                reveal key for faucet \
+                2>&1 | grep -v "Warning:" | grep -v "This is NOT" || true)
+            
+            if echo "$REVEAL_OUTPUT" | grep -q "Operation successfully injected\|successfully applied"; then
+                echo "  ✓ Faucet key revealed successfully!"
+            else
+                echo "  Reveal attempt output:"
+                echo "$REVEAL_OUTPUT" | head -5
+            fi
+        fi
+        
+        # Cleanup
+        rm -rf "$TEMP_CLIENT_DIR"
+        trap - EXIT
+    fi
+else
+    echo ""
+    echo "Step 12: Skipping faucet key revelation (--skip-faucet-reveal flag provided)"
+fi
+
 echo ""
 echo "=== Cleanup complete ==="
 echo "All pods, PVCs (disks), and Jobs have been cleaned and recreated."
+if [ "$SKIP_FAUCET_REVEAL" = false ]; then
+    echo "Faucet key revelation attempted (check output above for status)."
+fi
 echo "If resources are managed by Helm/Pulumi, they should be automatically recreated."
 echo "To verify recreation, run: kubectl get pods,pvc,jobs -n $NAMESPACE"
 
