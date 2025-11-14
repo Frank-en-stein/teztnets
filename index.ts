@@ -219,7 +219,7 @@ const faucetSslCert = new k8s.apiextensions.CustomResource("riscvnet-faucet-ssl-
         namespace: riscvnet_chain.namespace.metadata.name,
     },
     spec: {
-        domains: ["faucet.riscvnet.jstz.info"],
+        domains: ["faucet.riscvnet.jstz.info", "faucet.sandbox.jstz.info"],
     },
 }, { provider: k8sProvider })
 
@@ -231,7 +231,7 @@ const faucetApiSslCert = new k8s.apiextensions.CustomResource("riscvnet-faucet-a
         namespace: riscvnet_chain.namespace.metadata.name,
     },
     spec: {
-        domains: ["faucet-api.riscvnet.jstz.info"],
+        domains: ["faucet-api.riscvnet.jstz.info", "faucet-api.sandbox.jstz.info"],
     },
 }, { provider: k8sProvider })
 
@@ -362,7 +362,37 @@ new k8s.networking.v1.Ingress("riscvnet-https-ingress", {
                 },
             },
             {
+                host: "faucet.sandbox.jstz.info",
+                http: {
+                    paths: [{
+                        path: "/*",
+                        pathType: "ImplementationSpecific",
+                        backend: {
+                            service: {
+                                name: "tezos-faucet",
+                                port: { number: 8080 },
+                            },
+                        },
+                    }],
+                },
+            },
+            {
                 host: "faucet-api.riscvnet.jstz.info",
+                http: {
+                    paths: [{
+                        path: "/*",
+                        pathType: "ImplementationSpecific",
+                        backend: {
+                            service: {
+                                name: "tezos-faucet",
+                                port: { number: 3000 },
+                            },
+                        },
+                    }],
+                },
+            },
+            {
+                host: "faucet-api.sandbox.jstz.info",
                 http: {
                     paths: [{
                         path: "/*",
@@ -399,8 +429,26 @@ new gcp.dns.RecordSet("riscvnet-faucet-dns", {
     project: gcpProject,
 }, { dependsOn: [ingressStaticIp] })
 
+new gcp.dns.RecordSet("riscvnet-faucet-sandbox-dns", {
+    name: "faucet.sandbox.jstz.info.",
+    managedZone: "jstz-info",
+    type: "A",
+    ttl: 300,
+    rrdatas: [ingressStaticIp.address],
+    project: gcpProject,
+}, { dependsOn: [ingressStaticIp] })
+
 new gcp.dns.RecordSet("riscvnet-faucet-api-dns", {
     name: "faucet-api.riscvnet.jstz.info.",
+    managedZone: "jstz-info",
+    type: "A",
+    ttl: 300,
+    rrdatas: [ingressStaticIp.address],
+    project: gcpProject,
+}, { dependsOn: [ingressStaticIp] })
+
+new gcp.dns.RecordSet("riscvnet-faucet-api-sandbox-dns", {
+    name: "faucet-api.sandbox.jstz.info.",
     managedZone: "jstz-info",
     type: "A",
     ttl: 300,
