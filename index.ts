@@ -299,6 +299,13 @@ const rpcBackendConfig = new k8s.apiextensions.CustomResource("riscvnet-rpc-back
         connectionDraining: {
             drainingTimeoutSec: 60,
         },
+        customResponseHeaders: {
+            headers: [
+                "Access-Control-Allow-Origin: *",
+                "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS",
+                "Access-Control-Allow-Headers: *",
+            ],
+        },
     },
 }, { provider: k8sProvider, dependsOn: [riscvnet_chain] })
 
