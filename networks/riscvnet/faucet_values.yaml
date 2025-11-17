@@ -14,7 +14,7 @@ env:
 enableUI: true
 config:
   application:
-    name: "Tezos Riscvnet Faucet"
+    name: "Jstz Sandbox L1 Faucet"
     disableChallenges: true
     googleCaptchaSiteKey: ""  # Will be overridden by Pulumi from index.ts
     backendUrl: "" # filled in by pulumi
@@ -22,7 +22,7 @@ config:
   network:
     name: custom
     rpcUrl: "" # filled in by pulumi
-    faucetAddress: "" # Will be derived from riscvnet-faucet-key
+    faucetAddress: tz1P2DqS58eSkefYpNwmF2Vu2c6fJUx1a9A7
 
 # Value the server sets for the "Access-Control-Allow-Origin" header for CORS.
 authorizedHost: "" # filled in by pulumi
