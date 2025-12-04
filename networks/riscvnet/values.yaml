@@ -234,7 +234,7 @@ accounts:
     key: "PLACEHOLDER_WILL_BE_REPLACED_BY_PULUMI"
     type: secret
     is_bootstrap_baker_account: false
-    bootstrap_balance: "100000000000"
+    bootstrap_balance: "20000000000000000"
   bootstrap2:
     # General purpose funded account (populated by Pulumi from riscvnet-bootstrap2-key)
     key: "PLACEHOLDER_WILL_BE_REPLACED_BY_PULUMI"
